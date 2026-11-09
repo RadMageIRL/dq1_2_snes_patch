@@ -1,0 +1,20 @@
+# ROMs, archives, saves and emulator output never belong in this repo.
+*.sfc
+*.smc
+*.zip
+*.srm
+*.mss
+*.wram
+*.sram
+*.dmp
+
+# working folders: intermediates, emulator runs, local reference tools
+work/
+runs/
+local/
+out/
+release/
+
+# python bytecode
+__pycache__/
+*.pyc
