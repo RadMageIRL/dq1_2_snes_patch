@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## v0.1 (2026-11-09)
 
 First version. One patch per name flavor (DQ and DW) for the original Japanese ROM,
 headerless and headered, containing RPGOne's English translation v2.0, mziab's title
