@@ -28,6 +28,10 @@ else I changed is code, pointers, control bytes, or which name a line prints.
 Each fix below says what you see, why it happens, and what I changed. "Both flavors"
 means the DQ and DW versions of the translation; a few bugs exist in only one of them.
 
+The screenshots show the DQ flavor in Mesen 2: RPGOne v2.0 with mziab's fix on the left,
+this patch on the right. Some were taken with a test build that starts the message directly,
+so the scene around the text is not always where it happens in the game.
+
 ### Dragon Quest II: the Leaf of the World Tree softlock (both flavors)
 
 **What you see.** After the Prince of Cannock falls ill at the Beran inn, feeding him
@@ -52,6 +56,8 @@ break after "has recovered!", and shifted the text between the old and new split
 five bytes. Nothing outside the message moves. With 8-letter names for everyone, the
 two parts now come to at most 168 and 149 bytes.
 
+![Before and after: in RPGOne v2.0 the recovery speech's page ends in stray characters and the speech loops; with this patch the same page reads cleanly and the speech goes on to "Now let's go!"](screenshots/leaf-softlock.png)
+
 ### Dragon Quest I: the Dragonlord's offer loops (both flavors)
 
 **What you see.** Talking to the Dragonlord, his speech repeats from the start after
@@ -67,6 +73,8 @@ wrong place. The ",51,," is two digit characters (`$06 $02`) in the line itself.
 second page, and "What do you say..." for the garbled line, which is the wording
 RPGOne used in their other copy of this speech elsewhere in the ROM. The Yes/No
 targets do not move. Both answers now work.
+
+![Before and after: "What do you say,51,, boy?" in RPGOne v2.0, "What do you say..." with this patch](screenshots/dragonlord-offer.png)
 
 ### Dragon Quest II: names swapped while the prince is sick (both flavors)
 
@@ -130,6 +138,8 @@ in the Leftwyne inn.
 the King alone after Cannock still gives you that speech, which is how the prince gets
 to Leftwyne in the first place.
 
+![Before and after: in RPGOne v2.0 the prince stands in the Leftwyne inn while he is in the party; with this patch the inn is empty](screenshots/second-prince.png)
+
 ### Dragon Quest II: "Status" twice in the Status menu (both flavors)
 
 **What you see.** The Status submenu lists Status, Equip, Status.
@@ -139,6 +149,8 @@ window's own title line. The Japanese option means "view strength".
 
 **What I changed.** Added a line " View" in free space at `$31:FF00`, the same width as
 the other rows, and pointed the third row at it.
+
+![Before and after: the Status submenu reads Status, Equip, Status in RPGOne v2.0 and Status, Equip, View with this patch](screenshots/status-menu.png)
 
 ### Dragon Quest I: no save at level 30 (DQ flavor)
 
@@ -151,6 +163,8 @@ flavor has it right.
 
 **What I changed.** That one byte, so it waits and continues into the save question.
 
+![Before and after: at level 30 the King ends after "Certainly you can defeat King Dragon now!" in RPGOne v2.0; with this patch he goes on to "Shall I record your journey"](screenshots/level-30-save.png)
+
 ### Dragon Quest I: a "4" before your name with the Princess's Love (DQ flavor)
 
 **What you see.** "I hope that you are safe, 4Name."
@@ -158,6 +172,8 @@ flavor has it right.
 **Why.** A stray `$05`, the digit 4, before the name in that line (`$01:8749`).
 
 **What I changed.** Removed it.
+
+![Before and after: "I hope that you are safe, 4AA." in RPGOne v2.0, "I hope that you are safe, AA." with this patch](screenshots/princess-love.png)
 
 ### Dragon Quest I: the King's victory speech is skipped (both flavors)
 
@@ -169,6 +185,8 @@ save talk that follows the speech instead of to the speech. The Japanese branch 
 to the speech.
 
 **What I changed.** Pointed it at the speech.
+
+![Before and after: the King says "When your level has risen, come back and see me" in RPGOne v2.0; with this patch "You have finally slain King Dragon, and returned peace to the world!"](screenshots/victory-speech.png)
 
 ### Dragon Quest I: the princess says goodbye twice (both flavors)
 
@@ -183,6 +201,8 @@ on its own through another branch.
 
 **What I changed.** That one byte, so the message ends where the Japanese one does. The
 other branch still reaches those lines, as in the Japanese game.
+
+![Before and after: in RPGOne v2.0 the princess goes on to a second farewell ("I will continue to support you"); with this patch her farewell ends at "Now then, AA..."](screenshots/princess-farewell.png)
 
 ### Dragon Quest I: the title screen (both flavors)
 
