@@ -9,11 +9,9 @@ softlock in Dragon Quest II.
 
 ## Most of this is someone else's work
 
-**RPGOne Translations and EvilTeam Tradução translated these games.** Every line of
-English you read is theirs. Their credits, from the v2.0 readme: ChrisRPG (project
-leader, hacking, editing), SpSpiff (English script), Arch Demon and Brightman (script
-editing), Byuu (ASM programming, credited on romhacking.net as Near), Cynsob and Zeke_D
-(the DQST savestate tool), and a long list of testers.
+**RPGOne Translations and EvilTeam Traduções translated these games.** Every line of
+English you read is theirs. Their full credits, from their v2.0 readme, are listed
+under [Credits](#credits) at the end of this page.
 
 **mziab fixed the broken Dragon Quest I title screen in 2012.** That fix is his. It is
 included unchanged, byte for byte, and this patch applies it before anything of mine.
@@ -315,3 +313,51 @@ It takes your own Japanese ROM (headered or not), RPGOne's v2.0 IPS files and mz
 BPS files, checks the CRC32 at every stage, applies each fix only after confirming the
 bytes it replaces, and writes the patches. `tools/chunkscan.py` is the 256-byte scanner
 and `tools/txt.py` decodes the script.
+
+---
+
+## Credits
+
+### English translation v2.0 (2003): RPGOne Translations and EvilTeam Traduções
+
+From the credits in their v2.0 readme:
+
+| | |
+|---|---|
+| Project leader | ChrisRPG |
+| English script | SpSpiff |
+| Script editing | Arch Demon, Brightman, ChrisRPG |
+| ASM programming | Arch Demon, Byuu (credited on romhacking.net as Near), ChrisRPG |
+| Graphics | Brightman |
+| Savestate tool (DQST) | Cynsob, Zeke_D |
+| Testing | Alexander Sirlin, Arch Demon, Brennan Brooks, Brightman, ChrisRPG, Firebrand, Jeremy Gallen, Junts, King Mike, Magnus, Paul Kangas, Squall, Tony, Zeke_D |
+| Additional thanks | Anoda, Brightman, Byuu, Dark Force, Emu X Haven, Endwin, Fear Gaia, Gideon Zhi, Pendy, Zeke_D |
+
+Their own credits also appear in the game: on the screen shown at power-on, and in
+the Dragon Quest I ending after the original staff.
+
+### Title screen fix v1.0 (2012): mziab
+
+The Dragon Quest I title screen fix, included unchanged.
+
+### Dragon Quest I+II (1993): Enix
+
+The original game. *Dragon Quest* and all related names are trademarks of Square Enix.
+
+### This patch: RadMageIRL
+
+The fixes listed above, the build script and the tools in `tools/`. Testing was done in
+[Mesen 2](https://www.mesen.ca/).
+
+---
+
+## License
+
+My own work in this repository is released under the [MIT License](LICENSE): the
+build script and tools in `tools/`, the fixes described above, and this documentation.
+
+That license does not cover anyone else's work. The patch files also contain RPGOne
+Translations' and EvilTeam Traduções' English translation and mziab's title screen fix,
+which remain theirs, and *Dragon Quest I+II* belongs to Square Enix. As RPGOne's readme
+asks, do not distribute these patches with a ROM image; please do not distribute
+patched ROMs either.

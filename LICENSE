@@ -1,0 +1,31 @@
+MIT License
+
+Copyright (c) 2026 RadMageIRL
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+Scope: this license covers only RadMageIRL's own work in this repository: the build
+script and tools in tools/, the fixes, and the documentation. It does not cover
+third-party material that the patch files contain: the English translation v2.0 by
+RPGOne Translations and EvilTeam Traduções, and the title screen fix v1.0 by mziab,
+remain the work of their authors. Dragon Quest I+II and all related names are the
+property of Square Enix. Do not distribute the patches with a ROM image, and do not
+distribute patched ROMs.
