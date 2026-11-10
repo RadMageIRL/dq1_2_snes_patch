@@ -205,8 +205,9 @@ and the wait loop started from 0 instead of 3,100 frames. I restored the missing
 - **The Sea Cave in Dragon Quest II.** A review reports distorted map graphics in the
   lava areas. I could not reproduce it. In Mesen 2, battles in all three lava rooms
   leave video memory and palettes exactly as the Japanese game does, and every graphics
-  transfer finishes during vertical blank. If you see it, please report your emulator
-  and a savestate.
+  transfer finishes during vertical blank, and a full playthrough in a current Snes9x
+  showed no graphics problems either. If you see it, please report your emulator and a
+  savestate.
 - **Untranslated Dragon Quest I ending text.** The romhacking.net entry says the King's
   ending text is untranslated if you rescue the princess but do not bring her back. I
   could not reproduce it. With the princess never rescued, returned, or still carried at
@@ -216,7 +217,8 @@ and the wait loop started from 0 instead of 3,100 frames. I restored the missing
 - **"Rolandos complexion"** in the DQ flavor's Leaf scene is missing its apostrophe.
   That is RPGOne's text and I left it.
 - **The Snes9x freeze after battle** that one review fixed by turning off CPU sound
-  emulation. I did not reproduce it in Mesen 2.
+  emulation. I did not reproduce it in Mesen 2, and a full playthrough of both games
+  in a current Snes9x had no freezes.
 
 ---
 
@@ -278,8 +280,10 @@ scripted input. Names were set to the worst case where it matters: 8-letter hero
 prince names for the Leaf scene and the swap, "Samantha" for the new-game name bug.
 The Dragonlord's offer was checked inside Dragon Quest I with both answers, using a
 test build that opens with that speech. The Princess's Love digit and the skipped
-victory speech were checked against the script bytes and the Japanese script, not
-played.
+victory speech were checked against the Japanese script, then shown on v2.0 and on the
+fixed build through test builds that start each message (the victory speech in both
+flavors). Beyond these targeted tests, I played both games through to the end on a
+laptop running a current Snes9x, with no graphics problems and no freezes.
 
 For v0.2, the second prince was reproduced on RPGOne v2.0 and v0.1 from a controlled
 save state: story flags set directly, the prince joined at the Leftwyne inn, the King's
