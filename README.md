@@ -28,7 +28,7 @@ else I changed is code, pointers, control bytes, or which name a line prints.
 Each fix below says what you see, why it happens, and what I changed. "Both flavors"
 means the DQ and DW versions of the translation; a few bugs exist in only one of them.
 
-The screenshots show the DQ flavor in Mesen 2: RPGOne v2.0 with mziab's fix on the left,
+The screenshots show the DQ flavor in Mesen 2, with the hero named Rad: RPGOne v2.0 with mziab's fix on the left,
 this patch on the right. Some were taken with a test build that starts the message directly,
 so the scene around the text is not always where it happens in the game.
 
@@ -36,7 +36,7 @@ so the scene around the text is not always where it happens in the game.
 
 **What you see.** After the Prince of Cannock falls ill at the Beran inn, feeding him
 the Leaf of the World Tree starts his recovery speech, then the text box loops forever
-and the game has to be reset. Reviews tied it to his name being longer than 4 letters.
+or the screen goes black, and the game has to be reset. Reviews tied it to his name being longer than 4 letters.
 
 **Why.** The game builds each message into a 256-byte buffer and draws it with an
 8-bit index (`INC $C9` at `$00:B22F` and elsewhere), so anything past byte 255 wraps
@@ -56,7 +56,7 @@ break after "has recovered!", and shifted the text between the old and new split
 five bytes. Nothing outside the message moves. With 8-letter names for everyone, the
 two parts now come to at most 168 and 149 bytes.
 
-![Before and after: in RPGOne v2.0 the recovery speech's page ends in stray characters and the speech loops; with this patch the same page reads cleanly and the speech goes on to "Now let's go!"](screenshots/leaf-softlock.png)
+![Before and after, with the hero named Rad and the prince Rolando: in RPGOne v2.0 the screen goes black after "It was wrong of me to tell you not to worry." and the game hangs; with this patch the speech goes on to "Rolando: Now let's go!"](screenshots/leaf-softlock.png)
 
 ### Dragon Quest I: the Dragonlord's offer loops (both flavors)
 
@@ -173,7 +173,7 @@ flavor has it right.
 
 **What I changed.** Removed it.
 
-![Before and after: "I hope that you are safe, 4AA." in RPGOne v2.0, "I hope that you are safe, AA." with this patch](screenshots/princess-love.png)
+![Before and after: "I hope that you are safe, 4Rad." in RPGOne v2.0, "I hope that you are safe, Rad." with this patch](screenshots/princess-love.png)
 
 ### Dragon Quest I: the King's victory speech is skipped (both flavors)
 
@@ -191,8 +191,9 @@ to the speech.
 ### Dragon Quest I: the princess says goodbye twice (both flavors)
 
 **What you see.** When you carry the princess back to the King, she gives you the
-Princess's Love and says goodbye, then says goodbye again in other words ("I will
-continue to support you") and the kiss jingle plays a second time.
+Princess's Love and says goodbye, then keeps talking with one of the lines she has for
+later (such as "I will continue to support you" or "Do you fantasize about me?"), and
+the kiss jingle can play again.
 
 **Why.** In the Japanese script her farewell ends the message. In RPGOne its last line
 ends with a wait instead of an end (`$01:C057` DQ, `$01:C07D` DW), so the game keeps
@@ -202,7 +203,7 @@ on its own through another branch.
 **What I changed.** That one byte, so the message ends where the Japanese one does. The
 other branch still reaches those lines, as in the Japanese game.
 
-![Before and after: in RPGOne v2.0 the princess goes on to a second farewell ("I will continue to support you"); with this patch her farewell ends at "Now then, AA..."](screenshots/princess-farewell.png)
+![Before and after: in RPGOne v2.0 the princess keeps talking after her farewell ("Rad... Do you fantasize about me?"); with this patch her farewell ends at "Now then, Rad..."](screenshots/princess-farewell.png)
 
 ### Dragon Quest I: the title screen (both flavors)
 
