@@ -175,9 +175,47 @@ def fix_dq1_king_victory(rom, fl):
         put(rom, 0x01, 0xBD20, 'ea3b00debd', 'ea3b003bbd', 'king victory speech')
 
 
+# ---------------------------------------------------------------- DQ2 menus
+def fix_status_view(rom, fl):
+    # DQ2 Status submenu (window $4A, RPGOne's line list at $31:8380): title "Status",
+    # options Equip and view-status (JP: tsuyosa miru). RPGOne pointed the third row at the
+    # title's own line ($31:8394), so the menu read Status / Equip / Status. New line
+    # " View" at $31:FF00 (free in both flavors), same 8-cell width as the others.
+    put(rom, 0x31, 0xFF00, '00' * 11, '9d00' + enc('View').hex() + '000000a7ff', 'view line')
+    put(rom, 0x31, 0x838A, '9483', '00ff', 'status submenu row 3')
+
+
+# ---------------------------------------------------------------- DQ2 second prince
+def fix_king_prince(rom, fl):
+    # King of Laurasia (DQ2, script $14:800C; entry $14:8000 when Cannock is ill). JP sends
+    # "party of two" and "slot-2 HP 0" straight to the short "You've returned safely" text
+    # (JP $802B), past the check FB B3 (flag $B3 = told at Cannock that the prince left).
+    # RPGOne pointed both branches at the check itself ($8026), so with the prince already in
+    # the party the King repeats "A short time ago, the Prince ... came looking for you" and
+    # sets flag $9E again, which puts the prince back in the Leftwyne inn (map $28 record,
+    # shown while $9E is set). Talking to that copy replays the join. Same bytes both flavors.
+    put(rom, 0x14, 0x8000, 'e90a0c002680', 'e90a0c002b80', 'king: slot-2 HP 0 branch')
+    put(rom, 0x14, 0x8020, 'e9e60c022680', 'e9e60c022b80', 'king: party of two branch')
+    put(rom, 0x14, 0x802B, 'fd', 'fd', 'king: short speech starts here')
+
+
+# ---------------------------------------------------------------- DQ1 princess return
+def fix_dq1_princess_farewell(rom, fl):
+    # DQ1, bringing the princess back to the King: after the Princess's Love is handed over
+    # ($01:BFF5 DQ / $01:C017 DW; JP $01:8C84) Laura says goodbye and the message ends (JP
+    # "...<HERO>" FE FF). RPGOne ended her last line with F0 (wait) and no FF, so it ran on
+    # into the next entry (the "talk to Laura again" lines: $C4 = 2, D8 35, switch -> case 2)
+    # and played a second, reworded farewell plus the [kiss] jingle. That entry is still
+    # reached normally through FB 3F at $BFA5/$BFC5, whose target is the byte after this one.
+    a = 0xC057 if fl == 'dq' else 0xC07D
+    put(rom, 0x01, a - 2, 'f460f0e1c40002', 'f460ffe1c40002', 'princess farewell end')
+
+
 FIXES = [('title_idle', fix_title_idle), ('names', fix_names), ('leaf', fix_leaf),
          ('dragonlord', fix_dragonlord), ('dq1_level30_save', fix_dq1_level30_save),
-         ('dq1_princess_love', fix_dq1_princess_love), ('dq1_king_victory', fix_dq1_king_victory)]
+         ('dq1_princess_love', fix_dq1_princess_love), ('dq1_king_victory', fix_dq1_king_victory),
+         ('status_view', fix_status_view), ('king_prince', fix_king_prince),
+         ('dq1_princess_farewell', fix_dq1_princess_farewell)]
 
 
 def bps_create(src, dst):

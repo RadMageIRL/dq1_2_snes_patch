@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.2 (2026-11-09)
+
+- Dragon Quest II: the second Prince of Cannock no longer appears. After he joined you,
+  the King of Midenhall repeated his "the prince came looking for you" speech, which put
+  a copy of the prince back in the Leftwyne inn; talking to it replayed his joining
+  scene. The King now gives his normal greeting, as in the Japanese game.
+- Dragon Quest II: the Status submenu reads Status / Equip / View instead of listing
+  "Status" twice.
+- Dragon Quest I: when you bring the princess back, her farewell ends where the Japanese
+  game ends it, instead of running on into a second, reworded farewell and kiss.
+- Known issues: the Sea Cave graphics report and the untranslated Dragon Quest I ending
+  report were investigated and could not be reproduced (details in the README).
+
 ## v0.1 (2026-11-09)
 
 First version. One patch per name flavor (DQ and DW) for the original Japanese ROM,

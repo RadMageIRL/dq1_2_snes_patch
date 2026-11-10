@@ -18,9 +18,10 @@ editing), Byuu (ASM programming, credited on romhacking.net as Near), Cynsob and
 **mziab fixed the broken Dragon Quest I title screen in 2012.** That fix is his. It is
 included unchanged, byte for byte, and this patch applies it before anything of mine.
 
-Their wording is not changed, with two exceptions, both listed below: one line in the
-Dragonlord's speech that printed stray digits, and one stray digit in the Princess's
-Love message. Everything else I changed is code, pointers, or which name a line prints.
+Their wording is not changed, with three exceptions, all listed below: one line in the
+Dragonlord's speech that printed stray digits, one stray digit in the Princess's Love
+message, and one new menu word, "View", in the Dragon Quest II Status menu. Everything
+else I changed is code, pointers, control bytes, or which name a line prints.
 
 ---
 
@@ -113,6 +114,34 @@ text uses the princess's slot name. A new game with "Samantha" now keeps "Conan"
 Saves made with v2.0 keep whatever was stored; renaming the prince from the load
 screen rewrites it.
 
+### Dragon Quest II: a second Prince of Cannock (both flavors)
+
+**What you see.** After the prince joins you at the Leftwyne inn, he can be standing in
+the inn again while he is in your party, and talking to him plays his joining scene a
+second time. RPGOne's readme calls this the "clone prince", partly fixed in v2.0.
+
+**Why.** The King of Midenhall picks what to say with a list of checks. In the Japanese
+script a party of two (the prince has joined) goes straight to "You've returned safely"
+(`$14:802B`). RPGOne's pointers for that case, and for the one used while the prince is
+ill, land five bytes early (`$14:8004`, `$14:8024`), on the check before it. So once
+Cannock has told you that the prince left for Midenhall, the King repeats "A short time
+ago, the Prince of Cannock came looking for you" and sets the flag that puts the prince
+in the Leftwyne inn.
+
+**What I changed.** Pointed both at the greeting, as the Japanese script does. Visiting
+the King alone after Cannock still gives you that speech, which is how the prince gets
+to Leftwyne in the first place.
+
+### Dragon Quest II: "Status" twice in the Status menu (both flavors)
+
+**What you see.** The Status submenu lists Status, Equip, Status.
+
+**Why.** RPGOne's line list for that window (`$31:8380`) points the third row at the
+window's own title line. The Japanese option means "view strength".
+
+**What I changed.** Added a line " View" in free space at `$31:FF00`, the same width as
+the other rows, and pointed the third row at it.
+
 ### Dragon Quest I: no save at level 30 (DQ flavor)
 
 **What you see.** At the maximum level the King says you are strong enough to defeat
@@ -143,6 +172,20 @@ to the speech.
 
 **What I changed.** Pointed it at the speech.
 
+### Dragon Quest I: the princess says goodbye twice (both flavors)
+
+**What you see.** When you carry the princess back to the King, she gives you the
+Princess's Love and says goodbye, then says goodbye again in other words ("I will
+continue to support you") and the kiss jingle plays a second time.
+
+**Why.** In the Japanese script her farewell ends the message. In RPGOne its last line
+ends with a wait instead of an end (`$01:C057` DQ, `$01:C07D` DW), so the game keeps
+reading into the next message, a different set of her lines that the script reaches
+on its own through another branch.
+
+**What I changed.** That one byte, so the message ends where the Japanese one does. The
+other branch still reaches those lines, as in the Japanese game.
+
 ### Dragon Quest I: the title screen (both flavors)
 
 **The broken banner.** On real hardware and accurate emulators the DQ1 title shows
@@ -162,14 +205,16 @@ and the wait loop started from 0 instead of 3,100 frames. I restored the missing
 ## Known issues this patch does not fix
 
 - **The Sea Cave in Dragon Quest II.** A review reports distorted map graphics in the
-  lava areas. I have not investigated it yet.
-- **The second Prince of Cannock.** A review reports him standing in town while he is
-  already in your party. RPGOne's readme calls this partly fixed. Not investigated.
+  lava areas. I could not reproduce it. In Mesen 2, battles in all three lava rooms
+  leave video memory and palettes exactly as the Japanese game does, and every graphics
+  transfer finishes during vertical blank. If you see it, please report your emulator
+  and a savestate.
 - **Untranslated Dragon Quest I ending text.** The romhacking.net entry says the King's
   ending text is untranslated if you rescue the princess but do not bring her back. I
-  traced every branch of the ending against the Japanese script and found none that
-  reaches untranslated text, so I could not confirm it.
-- **The Dragon Quest II status submenu** lists "Status" twice. Not investigated.
+  could not reproduce it. With the princess never rescued, returned, or still carried at
+  the end, the King's ending text is in English and follows the Japanese script.
+  RPGOne's v1.1 notes list "Missing pointer for rescuing Princess after the defeat of
+  Dragonlord fixed", so the report probably describes an older version.
 - **"Rolandos complexion"** in the DQ flavor's Leaf scene is missing its apostrophe.
   That is RPGOne's text and I left it.
 - **The Snes9x freeze after battle** that one review fixed by turning off CPU sound
@@ -206,23 +251,23 @@ Patched ROM:
 
 | | Size | CRC32 | SHA-1 |
 |---|---|---|---|
-| DQ, headerless | 2,097,152 | `854DA5FA` | `b5c44b111f2f03edc45db8b462085169e02854d3` |
-| DQ, headered | 2,097,664 | `9801E511` | `0fc108e6d3a6c10d789a8941c97b42695bc4199a` |
-| DW, headerless | 2,097,152 | `39590904` | `d941b977fe9d3d0edd8c92b88e6cff25dbadcbee` |
-| DW, headered | 2,097,664 | `241549EF` | `bd497b9de5626b922406745970cc090574e4c2d2` |
+| DQ, headerless | 2,097,152 | `69567056` | `10b4409285b2984095357195c02ed55c541d20d3` |
+| DQ, headered | 2,097,664 | `741A30BD` | `804348fba81090ff5f9d44df81cc09f675b996a2` |
+| DW, headerless | 2,097,152 | `D1BA0360` | `dfb3ec3d61fcf9bb892314d760bfa82f0c831703` |
+| DW, headered | 2,097,664 | `CCF6438B` | `632812467780a4d7dc311fb9517e4eab1082e6c0` |
 
 Patch files (SHA-1):
 
 | File | SHA-1 |
 |---|---|
-| `dq1-2-fixed-patch-radmageirl-dq.bps` | `fc179d473de5c26f3562b86c1328903b2c21802b` |
-| `dq1-2-fixed-patch-radmageirl-dq.ips` | `d91a237bd3e3962c4d6938ba4661e10e266d9778` |
-| `dq1-2-fixed-patch-radmageirl-dw.bps` | `ae5f9a9217f7a7e0c99b01478eb5149d42993f0b` |
-| `dq1-2-fixed-patch-radmageirl-dw.ips` | `ce496276c40002eb0e7a9be62365639a47bd9e25` |
-| `headered/dq1-2-fixed-patch-radmageirl-dq-headered.bps` | `9b3701dbed075d74b18bc9a43fad87f0f7219bd6` |
-| `headered/dq1-2-fixed-patch-radmageirl-dq-headered.ips` | `74fd13c0814476135412e850ba272e61efa6c607` |
-| `headered/dq1-2-fixed-patch-radmageirl-dw-headered.bps` | `b1bc2ffaad17da42e85f6ff569538532faeff965` |
-| `headered/dq1-2-fixed-patch-radmageirl-dw-headered.ips` | `65d8fc15f1bd10c7777c80df5e24533e4ece7038` |
+| `dq1-2-fixed-patch-radmageirl-dq.bps` | `45b6b17945aeeab002738acf8a2616be71a93678` |
+| `dq1-2-fixed-patch-radmageirl-dq.ips` | `afa78b42540589b2164d77d2e1fb57b3622168b1` |
+| `dq1-2-fixed-patch-radmageirl-dw.bps` | `a991b8ed9d7e011709d5ebf6177b65531055c05c` |
+| `dq1-2-fixed-patch-radmageirl-dw.ips` | `f0d501b90f1c6ca52db14bfd4aee4a41052d45e0` |
+| `headered/dq1-2-fixed-patch-radmageirl-dq-headered.bps` | `90d62d5591f94ad05f62d4b11fbe18f3a66945e6` |
+| `headered/dq1-2-fixed-patch-radmageirl-dq-headered.ips` | `196c715eae540126f64a6ebb9f7ee87e860f9c50` |
+| `headered/dq1-2-fixed-patch-radmageirl-dw-headered.bps` | `1432cf54c80519b246d895611bda5f2543115f42` |
+| `headered/dq1-2-fixed-patch-radmageirl-dw-headered.ips` | `3b416031fcb55e91ba28da2c65a9fab4f8d2e218` |
 
 ---
 
@@ -237,6 +282,19 @@ The Dragonlord's offer was checked inside Dragon Quest I with both answers, usin
 test build that opens with that speech. The Princess's Love digit and the skipped
 victory speech were checked against the script bytes and the Japanese script, not
 played.
+
+For v0.2, the second prince was reproduced on RPGOne v2.0 and v0.1 from a controlled
+save state: story flags set directly, the prince joined at the Leftwyne inn, the King's
+script run, then Leftwyne entered again. The Japanese ROM under the same steps shows no
+second prince, and neither does the fixed build; the King's speech that sends the
+prince to Leftwyne still plays when you are alone. The princess's farewell was run
+through a test build that starts that message, on the Japanese ROM, v0.1 and the fixed
+build. The Dragon Quest I ending was played from a save state through the ceremony and
+the credits on the Japanese ROM and both flavors; the three princess cases were checked
+with a test build that starts the King's ending script. The Status menu was checked in
+both flavors. For the Sea Cave, battles were
+forced in each lava room and video memory, palettes and DMA timing were compared with
+the Japanese ROM.
 
 For the 256-byte limit I also scanned the whole script, following every branch. After
 the fixes, the only message it finds that crosses byte 255 because of long names is a
