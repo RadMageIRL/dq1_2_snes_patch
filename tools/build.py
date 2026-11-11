@@ -5,7 +5,8 @@ Input (per flavor): work/03_rpgone20_titlefix_<dq|dw>.sfc
 Output: work/out/<flavor>/ fixed ROM, IPS and BPS against the headerless JP ROM.
 
 Every change asserts the bytes it replaces, so a wrong input fails loudly.
-usage: python tools/build.py [--only fixid,fixid] [--skip fixid]
+usage: python tools/build.py [--only fixid,fixid] [--skip fixid] [--out DIR] [--release DIR]
+Regression checks: python tools/check_fixes.py (no emulator needed).
 """
 import argparse
 import hashlib
@@ -211,11 +212,877 @@ def fix_dq1_princess_farewell(rom, fl):
     put(rom, 0x01, a - 2, 'f460f0e1c40002', 'f460ffe1c40002', 'princess farewell end')
 
 
+# ================================================================ v0.3 stage 1
+# Each correction is derived from the original Japanese script or from RPGOne's own other
+# flavor (noted per fix). Old bytes are asserted in full. Fixes that touch only one flavor
+# also assert the other flavor's bytes, so a wrong input fails loudly.
+
+def fix_orb_after_hargon(rom, fl):
+    # DQ2, Descendant's Orb after Hargon. "D8 0D" yes/no: Yes ($9D77 DQ / $9D88 DW) ends its
+    # last line with F0 and no FF, so it runs on into the No text ($9DCD / $9DDE), whose
+    # D8 03 jumps back to the question: the conversation never ends. JP's Yes message
+    # ($2B:9B1E) ends with FF. Same one-byte fix in both flavors.
+    a = 0x9DCC if fl == 'dq' else 0x9DDD
+    put(rom, 0x2B, a - 3, '505050f0fd5f8b13', '505050fffd5f8b13', 'orb: end the Yes message')
+
+
+def fix_nun_after_hargon(rom, fl):
+    # DQ2, nun after Hargon (DQ flavor). After "Thanks to you, the people have been saved."
+    # the window-restart D8 03 at $33:C9D0 jumps back to $C9A2, the start of that same line,
+    # so it repeats forever. JP ($0F:F170) is one linear message; RPGOne's DW flavor has the
+    # same D8 03 pointing at the byte after itself ($33:CA1C -> $CA21). DQ now does too.
+    if fl == 'dq':
+        put(rom, 0x33, 0xC9CE, '50f0d80301a2c9fd5f8b23', '50f0d80301d5c9fd5f8b23', 'nun: restart, not loop')
+    else:
+        put(rom, 0x33, 0xCA1C, 'd8030121ca', 'd8030121ca', 'nun (DW): already a restart')
+
+
+def fix_flute_crests(rom, fl):
+    # DQ2, Echoing Flute. The five map checks ([$0021] = $2D/$35/$63/$7E/$99) all jumped to
+    # the crest-1 flag test (FB C9), so after the first crest was taken the flute never
+    # echoed at the other four sites. JP ($2B:9815) sends each map to its own flag test:
+    # $2D->C9, $35->CB, $63->CD, $7E->CC, $99->CA. Same order of tests in both flavors.
+    base = 0x9976 if fl == 'dq' else 0x997B          # first E9 [0021]==2D
+    tests = base + 0x32                              # FB C9 block; blocks are 11 bytes apart
+    old = b''.join(bytes([0xE9, 0x21, 0x00, m, tests & 0xFF, tests >> 8]) for m in (0x2D, 0x35, 0x63, 0x7E, 0x99))
+    new = b''.join(bytes([0xE9, 0x21, 0x00, m, (tests + 11 * k) & 0xFF, (tests + 11 * k) >> 8])
+                   for k, m in enumerate((0x2D, 0x35, 0x63, 0x7E, 0x99)))
+    for k, flag in enumerate((0xC9, 0xCB, 0xCD, 0xCC, 0xCA)):  # each target is its own test
+        o = off(0x2B, tests + 11 * k)
+        if rom[o:o + 2] != bytes([0xFB, flag]):
+            raise SystemExit('flute: no FB %02X at 2B:%04X' % (flag, tests + 11 * k))
+    put(rom, 0x2B, base, old, new, 'flute: per-crest flag tests')
+
+
+def fix_king_prince_party3(rom, fl):
+    # DQ2, King of Laurasia, party of three (completes v0.2 king_prince). With flag $9C set
+    # (D8 03 at $81A2 DQ / $81A1 DW) or the princess at 0 HP (E9 [0C0B]==00 at $81A8 / $81A7),
+    # RPGOne still sent the King to $8026 (FB B3 -> "the Prince ... came looking for you",
+    # sets $9E: the prince reappears at the Leftwyne inn). JP $14:8135 and $813B go to the
+    # short "You've returned safely" text, = $802B here (checked by king_prince).
+    a = 0x81A2 if fl == 'dq' else 0x81A1
+    put(rom, 0x14, a, 'd803012680ffe90b0c002680', 'd803012b80ffe90b0c002b80', 'king: party-of-three branches')
+    put(rom, 0x14, 0x802B, 'fd', 'fd', 'king: short speech starts here')
+
+
+# Chance (DQ2 spell $19): battle script $01:8F02 (both flavors), JP $01:E444. Byte runs below
+# are RPGOne's own text; only control codes, targets and the slot-0 name change.
+CH_FREE = 0xFF40                        # bank $01 tail, zero in JP, v2.0 DQ and v2.0 DW
+HEALED = '55420046 3e443d33 42004634 41340037 34303b34 3358'.replace(' ', '')  # 's wounds were healed!
+NOEFFECT = '00373033 003d3e00 34353534 324358'.replace(' ', '')                # " had no effect!"
+REVIVED = '00463042 00413445 38453433 58'.replace(' ', '')                     # " was revived!" ($01:8959)
+APPEARED = '00303f3f 34304134 3358'.replace(' ', '')                           # " appeared!"
+
+
+def fix_chance(rom, fl):
+    """Restore JP's control flow in Chance's outcome scripts (JP $01:E444).
+
+    Roll 7 (monsters flee) and roll 4 (full HP): RPGOne jumped to the 'X casts Chance!'
+    message (D8 03 -> $8920, ending in FF) where JP calls it (F1 7B DF), so the script ended
+    there: no flee messages, no rewards, no battle-end music restore. Roll 6 (confuse): JP
+    'D8 24 00 F5 A4' became 'F1 F5 A4', a call into $01:A4F5 that printed 'damage!' and broke
+    the loop after one monster. Roll 4 also had wrong 'was dead' targets, a no-op absent-slot
+    check, a call where JP restarts the window, and a jump into roll 6 (JP: next slot).
+    Text (user-approved, v0.3): JP's 'revived' line for roll 4 (RPGOne's ' had no effect!')
+    now uses RPGOne's own Revive wording ' was revived!', and the slot-0 lines of the heal
+    outcomes (rolls 0 and 4) and of the flee outcome (roll 7, '<slot 0> appeared!') name
+    party slot 0 (F1 56 01) as JP does, not the caster (F4).
+    """
+    tail = 'ca9d' if fl == 'dq' else 'cc9d'      # D8 03 target ($9DCA / $9DCC) after slot 2
+    # sanity: the dispatch and the shared parts are where this fix expects them
+    put(rom, 0x01, 0x8F02, 'e9311000338fe9311001bd8f', 'e9311000338fe9311001bd8f', 'chance: dispatch')
+    put(rom, 0x01, 0x8F1A, 'e9311004d58f', 'e9311004d58f', 'chance: roll 4 entry')
+    put(rom, 0x01, 0x90C3, 'd80c00d80301' + tail + 'ff', 'd80c00d80301' + tail + 'ff', 'chance: roll 4 end')
+    free = off(0x01, CH_FREE)
+    if any(rom[free:free + 0x69]):
+        raise SystemExit('chance: $01:%04X-$%04X is not free' % (CH_FREE, CH_FREE + 0x68))
+
+    def stub(at, code):
+        put(rom, 0x01, at, '00' * len(code), code, 'chance: new code at 01:%04X' % at)
+        return at + len(code)
+
+    def le(a):
+        return bytes([a & 0xFF, a >> 8])
+
+    # --- roll 4, slot 0: rebuilt at $FF40 in JP's layout (JP $01:E504-$E54A) -------------
+    s0, slot1 = CH_FREE, 0x9024
+    revived0 = s0 + 30 + 25 + 1 + 3                 # after test/copy/sound, healed text, F0, FC
+    join0 = revived0 + 16 + 1
+    block = (bytes.fromhex('f12089')                               # call "X casts Chance!"
+             + bytes.fromhex('e99d0cff') + le(slot1)               # slot 0 absent -> slot 1
+             + bytes.fromhex('e0090ca00c' 'd80c00')                # HP = max HP, refresh
+             + bytes.fromhex('e99d0c00') + le(revived0)            # was dead -> revived text
+             + bytes.fromhex('e1b0101d' 'd82c00')                  # heal sound
+             + bytes.fromhex('f15601' + HEALED + 'f0')            # <slot 0>'s wounds were healed!
+             + b'\xfc' + le(join0)
+             + bytes.fromhex('f15601' + REVIVED + 'f0')           # <slot 0> was revived!
+             + bytes.fromhex('d80301') + le(slot1) + b'\xff')      # window restart -> slot 1
+    assert len(block) == 82 and s0 + block.index(bytes.fromhex('f15601' + REVIVED)) == revived0
+    nxt = stub(s0, block)
+    old_slot0 = ('d803012089' 'e99d0cff2490' 'e0090ca00c' 'd80c00' 'e99d0c00f58f' 'e1b0101d' 'd82c00'
+                 'f4' + HEALED + 'f0' 'fc2090' 'f4' + NOEFFECT + 'f12490' 'ff')
+    put(rom, 0x01, 0x8FD5, old_slot0, 'fc' + le(s0).hex() + 'ff' * 76, 'chance: roll 4 slot 0 -> new block')
+    # --- roll 4, slot 1 (JP $E54B-$E591) --------------------------------------------------
+    put(rom, 0x01, 0x9027, 'e99e0cf02d90', 'e99e0cff7890', 'chance: slot 1 absent -> slot 2')
+    put(rom, 0x01, 0x9035, 'e99e0c004290', 'e99e0c006190', 'chance: slot 1 was dead -> revived text')
+    put(rom, 0x01, 0x905C, 'fc7290' 'f15f01' + NOEFFECT + 'f0' 'd80301cc90' 'ff',
+        'fc7290' 'ffff' 'f15f01' + REVIVED + 'f0' 'd803017890' 'ff', 'chance: slot 1 revived text, -> slot 2')
+    # --- roll 4, slot 2 (JP $E592-$E5D8): only the revived text -------------------------
+    put(rom, 0x01, 0x9086, 'e99f0c00b090', 'e99f0c00b290', 'chance: slot 2 was dead -> revived text')
+    put(rom, 0x01, 0x90AD, 'fcc390' 'f16801' + NOEFFECT + 'f0' 'd80c00',
+        'fcc390' 'ffff' 'f16801' + REVIVED + 'f0' 'd80c00', 'chance: slot 2 revived text')
+    # --- roll 0 (heal all), slot-0 line: JP 'call $0156', RPGOne F4 (the caster) -----------
+    r0 = nxt
+    nxt = stub(r0, bytes.fromhex('d82c00' 'f15601' 'fc') + le(0x8F4A))
+    put(rom, 0x01, 0x8F46, 'd82c00f4' + HEALED, 'fc' + le(r0).hex() + 'ff' + HEALED, 'chance: roll 0 slot-0 name')
+    # --- roll 6 (confuse): JP 'D8 24 00 F5 A4' before the monster name --------------------
+    r6 = nxt
+    nxt = stub(r6, bytes.fromhex('d82400' 'f5a4' 'fc') + le(0x90F6))
+    put(rom, 0x01, 0x90F3, 'f1f5a4e2', 'fc' + le(r6).hex() + 'e2', 'chance: roll 6 monster name')
+    # --- roll 7 (flee): call the cast message, as JP ---------------------------------------
+    r7 = nxt
+    nxt = stub(r7, bytes.fromhex('f12089' 'fc') + le(0x910E))
+    put(rom, 0x01, 0x9109, 'd803012089d80200', 'fc' + le(r7).hex() + 'ffff' 'd80200', 'chance: roll 7 cast call')
+    assert nxt == CH_FREE + 0x69, hex(nxt)
+    # --- roll 7, slot-0 'appeared' line: JP 'call $0156', RPGOne F4 (the caster) ------------
+    # (same pattern as roll 0; the stub sits after fix_chance_confused_attack's 7 bytes at $FFA9)
+    r7n = CH_FREE + 0x70
+    stub(r7n, bytes.fromhex('d82500' 'f15601' 'fc') + le(0x914C))
+    put(rom, 0x01, 0x9142, 'e9090c005791' 'd82500f4' + APPEARED + 'f0' 'e90a0c006e91',
+        'e9090c005791' 'fc' + le(r7n).hex() + 'ff' + APPEARED + 'f0' 'e90a0c006e91', 'chance: roll 7 slot-0 name')
+
+
+def fix_chance_confused_attack(rom, fl):
+    # DQ2, a confused monster attacking (battle action $11, chosen at $0B:8AB7 only for a
+    # monster whose confusion counter $1028+n is set; only Chance's confuse outcome sets it,
+    # $0B:B090). RPGOne's script ($01:A2B8 DQ / $01:A2BA DW) is JP $01:F461 with two control
+    # slips that show once fix_chance confuses every monster as JP does:
+    #  - E8 [0C91]!=00 (damage dealt) still jumped to JP's $01:F492, untranslated leftover
+    #    text whose D8 03 $F029 runs on into more leftovers: garbled Japanese, a stray
+    #    "1 Key", and the battle ended with no rewards and the battle theme left playing.
+    #    RPGOne's own copy of that block is right below ($A2EA DQ / $A2EC DW), same codes.
+    #  - the no-damage line starts 'D8 00' where JP has 'D8 24 00', so D8 read $3C as a
+    #    parameter count and swallowed the next 120 bytes. Restored through a 7-byte stub.
+    a = 0xA2B8 if fl == 'dq' else 0xA2BA
+    dmg, cont = a + 0x32, a + 0x0E                 # English damage block; byte after 'D8 00 3C'
+    stub = CH_FREE + 0x69                          # after fix_chance's code, zero in v2.0
+    put(rom, 0x01, a, 'e0600f6011' 'e8910c0092f4' 'd8003c' + '3842423433',
+        'e0600f6011' 'e8910c00' + bytes([dmg & 0xFF, dmg >> 8]).hex() + 'fc' + bytes([stub & 0xFF, stub >> 8]).hex()
+        + '3842423433', 'confused attack: damage target, no-damage line')
+    put(rom, 0x01, dmg, 'e1b01007d82c00d82600fa8f0cde', 'e1b01007d82c00d82600fa8f0cde', 'confused attack: damage block')
+    put(rom, 0x01, stub, '00' * 7, 'd824003c' 'fc' + bytes([cont & 0xFF, cont >> 8]).hex(), 'confused attack: D8 24 00 stub')
+
+
+def fix_dq1_transform(rom, fl):
+    # DQ1, Dragonlord refused twice: after battle 1 the field code ($00:9167, flag $52) shows
+    # the message at LDY #msg / LDA #bank ($00:9186/$918B), then battle 2. RPGOne moved the
+    # transformation script to bank $32 and repointed this in DW ($32:EAEC) but not in DQ,
+    # which still pointed at JP's $01:CC83, now the middle of an unused copy of the accept
+    # speech ("u half of the world of darkness! ... WA HA HA HA!"). RPGOne's DQ translation
+    # of the scene is at $32:EA3E (same control codes as JP $01:CC83: $D5=1, flags $12/$10,
+    # two D8 31 sound effects) and had no reference, so its line layout was never seen: the
+    # first FD has no FE before it and the "disappears..." line has no F0, so in Mesen the
+    # text ran together and off the window ("graduallydisapp|ears... ... ...What!King
+    # Dragon's true|: form is revealed!"). The copy at $32:FF00 (free, zero in v2.0 DQ) is
+    # that script with the line codes of RPGOne's own DW version ($32:EAEC): FE FD before
+    # the second line, F0 after it, "What! <name>'s" FE "true form is revealed!". Wording,
+    # flags and sound commands are unchanged. $32:EA3E itself is left as it was.
+    if fl == 'dq':
+        old = ('e1d50001ee1200d83100e5' + enc("King Dragon").hex() + '5542' + '00' + enc('form gradually').hex()
+               + 'fd' + enc('disappears').hex() + '6000600060' + 'ee1000d83100e5' + enc('What').hex() + '58'
+               + 'fd' + enc('King Dragon').hex() + '5542' + '00' + enc('true form is revealed').hex() + '58'
+               + 'd8520000ff')
+        new = ('e1d50001ee1200d83100e5' + enc("King Dragon").hex() + '5542' + '00' + enc('form gradually').hex()
+               + 'fefd' + enc('disappears').hex() + '6000600060' + 'f0' + 'ee1000d83100e5' + enc('What').hex() + '58'
+               + '00' + enc('King Dragon').hex() + '5542' + 'fe' + enc('true form is revealed').hex() + '58'
+               + 'd8520000ff')
+        n = len(new) // 2
+        put(rom, 0x32, 0xEA3E, old, old, 'transform: RPGOne DQ script (unchanged)')
+        put(rom, 0x32, 0xFF00, '00' * n, new, 'transform: DQ script, DW line layout')
+        put(rom, 0x00, 0x9186, 'a083cc8453a9018555', 'a000ff8453a9328555', 'transform: pointer')
+    else:
+        put(rom, 0x00, 0x9186, 'a0ecea8453a9328555', 'a0ecea8453a9328555', 'transform (DW): already bank $32')
+
+
+# ================================================================ v0.3 stage 2
+# Data corruption and dialogue corrections. Each value comes from the Japanese original or from
+# RPGOne's own text in the other flavor (noted per fix). Old bytes are asserted in full.
+
+def fix_item_menu_name(rom, fl):
+    # DQ2: RPGOne's item-name line-break handler ($30:8600, called from the expander at $09:A007
+    # for every character drawn straight to a window) begins 'CMP #$2A / BEQ / RTL', then stores
+    # the $2A into $7E016E. $016E is the 7th byte of party slot 2's 9-byte name ($0168, normally
+    # the princess), so opening the Item menu with a two-line item name ("Leather / Armor")
+    # replaced her 7th letter, or the end mark of a 6-letter name, and the save kept it. Nothing
+    # reads $016E as a variable (no other access to it in the ROM), and JP has no such handler:
+    # its code there is the dakuten test. The store is removed; the line break itself is kept.
+    put(rom, 0x30, 0x8600, 'c92af0016b' '8f6e017e' 'c220a504186940', 'c92af0016b' 'eaeaeaea' 'c220a504186940',
+        'item names: no store into the slot-2 name')
+
+
+def fix_beran_inn_price(rom, fl):
+    # DQ2, Beran inn (NPC records $1C:C92F/$1C:EC56 -> $34:B82D DQ / $34:B82B DW; JP $14:E0B7).
+    # "One night is N gold." prints the number variable $0C91 (F6 91) in the DQ flavor, a leftover
+    # value (damage, prices), where JP ($14:E0DF) and RPGOne's DW flavor print the inn price, $0C89.
+    if fl == 'dq':       # "...night is " F6 91 00 " gold."
+        put(rom, 0x34, 0xB86B, '4300384200f6910000363e3b33', '4300384200f6890000363e3b33', 'inn price variable')
+    else:
+        put(rom, 0x34, 0xB869, '4300384200f6890000363e3b33', '4300384200f6890000363e3b33', 'inn price (DW): already $0C89')
+
+
+def fix_vault_balance(rom, fl):
+    # DQ2 vault. The balance ($0D92, copied to $0C89 by $09:E077) goes up to 1,000,000 and a
+    # deposit (in $0C91) up to 99,000, because the party may carry 99,999 gold ($1B:A479).
+    # JP prints both with the 24-bit number code 'DB lo hi' (JP $2B:89FF 'DB 91 0C' for the
+    # deposit, $2B:8C6F 'DB 89 0C' for the balance); RPGOne used the 16-bit 'F6 var 00', which
+    # prints the value mod 65,536. Same length; DB prints without leading zeros like F6 ... 00.
+    put(rom, 0x2B, 0x839E, 'fd5f8b' 'f69100' '00363e3b3351', 'fd5f8b' 'db910c' '00363e3b3351', 'vault: deposit amount, 24-bit')
+    put(rom, 0x2B, 0x873C, '3d3600' 'f68900' '00363e3b3350', '3d3600' 'db890c' '00363e3b3350', 'vault: balance, 24-bit')
+
+
+def fix_vault_balance_layout(rom, fl):
+    # Layout only, no wording change (separate id so it can be dropped). "*: Currently, I'm holding
+    # N gold." fills the window with a 4-digit N; with 5 digits (already possible in v0.2 for
+    # 10,000-65,535) the final "." spills onto the start of the next row, and the 24-bit balance
+    # can have 7 digits. JP puts the amount on the first line and breaks after it. The space after
+    # "holding" becomes a line break (00 -> FE, same length): "Currently, I'm holding" / "N gold."
+    o = off(0x2B, 0x873F)
+    assert rom[o:o + 2] in (b'\xf6\x89', b'\xdb\x89'), 'vault: balance number code at 2B:873F'   # either order of ids
+    put(rom, 0x2B, 0x8737, enc('holding').hex() + '00', enc('holding').hex() + 'fe', 'vault: balance line break')
+
+
+AH_TABLE = 0xF96E          # $14: JP's table of 'after Hargon' far gotos, one 8-byte stub per message
+
+
+def fix_after_hargon_villagers(rom, fl):
+    # DQ2, villagers after Hargon (flag $CE). JP keeps one far-goto stub per shared message at
+    # $14:F96E + 8k ('D8 3C 02 lo hi 2B 00 FF'); RPGOne kept the table and put its translations in
+    # 128-byte slots at $33:8C00 + $80k. Every slot's message starts at the slot except the first,
+    # whose message ("Thanks to you, peace has returned...", JP $2B:B99E) starts at $33:8C20 in
+    # both flavors, yet its stub and RPGOne's two copies of it still pointed at $33:8C00. In DQ that
+    # is the tail of an unrelated King line ("<HERO>, open that treasure chest!"); in DW it is 32
+    # bytes of padding, printed as spaces. 15 NPC scripts reach these stubs.
+    stubs = [(0x14, 0xEC23 if fl == 'dq' else 0xEC77), (0x14, AH_TABLE), (0x34, 0xE249 if fl == 'dq' else 0xE257)]
+    put(rom, 0x33, 0x8C20, 'fd5f8b' + enc('Thanks to you').hex(), 'fd5f8b' + enc('Thanks to you').hex(),
+        'after Hargon: slot-0 message at $33:8C20')
+    for k in range(1, 28):                       # the other slots start at their slot address
+        o = off(0x14, AH_TABLE + 8 * k)
+        assert rom[o:o + 3] == b'\xd8\x3c\x02' and rom[o + 5] == 0x33, k
+        assert rom[off(0x33, rom[o + 3] | rom[o + 4] << 8):][:3] == b'\xfd\x5f\x8b', k
+    for b, a in stubs:
+        put(rom, b, a, 'd83c02008c3300ff', 'd83c02208c3300ff', 'after Hargon: stub at %02X:%04X' % (b, a))
+
+
+# Literal hex escapes left in RPGOne's text (",60", ",60,", ",60,fe", ",60,f0", ",fe"). Each one
+# spells the code that RPGOne meant: $60 is the ellipsis, FE a new line, F0 a wait. Where the real
+# code follows the literal, the literal is removed; where it does not (",60,How"), the literal
+# becomes the ellipsis byte. RPGOne's DQ flavor has these lines without the escapes, and in every
+# such line the result equals its DQ bytes. The text after each edit moves up to the message's end
+# (its FF), the freed bytes become FF, and address operands inside the moved text are adjusted.
+# check_fixes.py verifies that nothing else in the ROM points into a moved span.
+L60, L60C, L60FE, L60F0, LFE = '510701', '51070151', '510701513534', '510701513501', '513534'
+GARBAGE = {   # (bank, first edit, span end FF): [(address, old, new), ...]
+    'dq': [
+        ((0x14, 0x9AFC, 0x9B59), [(0x9AFC, LFE + 'fe', 'fe')]),                       # friend,,fe
+        ((0x2B, 0x93F3, 0x9412), [(0x93F3, LFE + 'fe', 'fe')]),                       # cursed!,fe
+        ((0x33, 0x9D32, 0x9E0C), [(0x9D32, L60FE + '60fe', '60fe')]),                 # Ah prince <HERO>,60,fe
+        ((0x33, 0xA0D2, 0xA0EE), [(0xA0D2, L60FE + '60fe', '60fe')]),                 # Prince <HERO>,60,fe
+        ((0x34, 0x88FF, 0x8928), [(0x88FF, LFE + 'fe', 'fe')]),                       # careful,,fe
+    ],
+    'dw': [
+        ((0x2B, 0x93F2, 0x9411), [(0x93F2, LFE + 'fe', 'fe')]),
+        ((0x33, 0x9D2C, 0x9E07), [(0x9D2C, L60FE + '60fe', '60fe')]),
+        ((0x33, 0xA0D0, 0xA0EC), [(0xA0D0, L60FE + '60fe', '60fe')]),
+        ((0x33, 0xB20D, 0xB231), [(0xB20D, L60FE + '60fe', '60fe')]),                 # Fix this one.,60,fe
+        ((0x33, 0xB573, 0xB589), [(0xB573, L60C + '17', '6017'),                      # Oh,60,How
+                                  (0xB583, L60 + '606060ff', '606060ff')]),           # terrible,60...
+        ((0x33, 0xB5F8, 0xB64E), [(0xB5F8, L60C + '1f', '601f')]),                    # Pl,60,Please
+        ((0x33, 0xB8DC, 0xB8E0), [(0xB8DC, L60 + '60ff', '60ff')]),                   # fire,60
+        ((0x33, 0xBB1A, 0xBB1E), [(0xBB1A, L60 + '60ff', '60ff')]),                   # Hargon,60
+        ((0x33, 0xBBB2, 0xBBD5), [(0xBBB2, L60C + '29', '6029'),                      # Zzz,60,Zzz
+                                  (0xBBD1, L60 + '60ff', '60ff')]),                   # Zzz,60
+        ((0x33, 0xBE11, 0xBE15), [(0xBE11, L60 + '60ff', '60ff')]),                   # Ahhhh,60
+        ((0x33, 0xC1AB, 0xC1AF), [(0xC1AB, L60 + '60ff', '60ff')]),                   # crackle,60
+        ((0x33, 0xC314, 0xC414), [(0xC314, L60C + '6060d852', '6060d852'),            # I,60,
+                                  (0xC3FE, L60 + '60d854', '60d854'),                 # forth,60
+                                  (0xC40A, L60C + '58', '6058')]),                    # Ugghh,60,!
+        ((0x33, 0xC64C, 0xC650), [(0xC64C, L60 + '60ff', '60ff')]),                   # be?,60
+        ((0x33, 0xC6F7, 0xC6FB), [(0xC6F7, L60 + '60ff', '60ff')]),                   # That is decided,60
+        ((0x33, 0xC77A, 0xC77E), [(0xC77A, L60 + '60ff', '60ff')]),                   # All is decided,60
+        ((0x33, 0xC9CA, 0xCAA9), [(0xC9CA, L60FE + '60fe', '60fe'),                   # nun: <HERO>,60,fe
+                                  (0xC9DB, L60FE + '60fe', '60fe'),                   # <Cannock>,60,fe
+                                  (0xC9E6, L60F0 + '60f0', '60f0')]),                 # <princess>,60,f0
+        ((0x34, 0x8903, 0x892C), [(0x8903, LFE + 'fe', 'fe')]),                       # careful,,fe
+    ],
+}
+TLEN = {0xE0: 5, 0xE1: 4, 0xE7: 3, 0xE8: 6, 0xE9: 6, 0xEA: 5, 0xFB: 5, 0xEE: 3, 0xEF: 3, 0xF1: 3, 0xF5: 2,
+        0xFC: 3, 0xF6: 3, 0xDB: 3, 0xF7: 4, 0xFA: 4, 0xDE: 3}
+TONE = {0xF0, 0xF4, 0xFD, 0xFE, 0xE2, 0xE5, 0xDC, 0xDD}
+
+
+def text_operands(rom, bank, start, stop):
+    """Address operands in the script bytes start..stop (inclusive): [(operand address, target)].
+    Fails on a code whose length is not known, so a misparse cannot go unnoticed."""
+    out, a = [], start
+    while a <= stop:
+        o = off(bank, a)
+        x = rom[o]
+        if x < 0xD8 or x in TONE or x == 0xFF:
+            a += 1
+        elif x == 0xD8:
+            n = rom[o + 2]
+            out += [(a + 3 + 2 * k, rom[o + 3 + 2 * k] | rom[o + 4 + 2 * k] << 8) for k in range(n)]
+            a += 3 + 2 * n
+        elif x in TLEN:
+            p = {0xE8: 4, 0xE9: 4, 0xEA: 3, 0xFB: 3, 0xFC: 1}.get(x)
+            if p:
+                out.append((a + p, rom[o + p] | rom[o + p + 1] << 8))
+            a += TLEN[x]
+        else:
+            raise SystemExit('text: unknown code %02X at %02X:%04X' % (x, bank, a))
+    return out
+
+
+def shrink_text(rom, bank, start, stop, edits, what):
+    """Apply same-or-shorter edits inside bank:start..stop (stop = the FF ending the span), move
+    the rest of the span up, fill the freed bytes with FF and adjust address operands that point
+    into the span. Returns the old -> new address map of the span."""
+    assert rom[off(bank, stop)] == 0xFF, what
+    ops = text_operands(rom, bank, start, stop)
+    new, amap, a, ei = bytearray(), {}, start, 0
+    edits = sorted(edits)
+    while a <= stop:
+        if ei < len(edits) and a == edits[ei][0]:
+            ea, old, nw = edits[ei]
+            old, nw = bytes.fromhex(old), bytes.fromhex(nw)
+            put(rom, bank, ea, old, old, what)          # assert
+            assert old.endswith(nw[1:]) and len(nw) <= len(old), (what, hex(ea))
+            # the kept real bytes are the tail of 'old'; map them to their new place
+            for k in range(len(nw)):
+                amap[ea + len(old) - len(nw) + k] = start + len(new) + k
+            new += nw
+            a += len(old)
+            ei += 1
+            continue
+        amap[a] = start + len(new)
+        new.append(rom[off(bank, a)])
+        a += 1
+    assert ei == len(edits), what
+    for opa, tgt in ops:                            # operand positions and targets inside the span
+        if start < tgt <= stop:
+            if tgt not in amap:
+                raise SystemExit('%s: operand at %02X:%04X targets an edited byte %04X' % (what, bank, opa, tgt))
+            nt = amap[tgt]
+            p = amap[opa] - start
+            new[p], new[p + 1] = nt & 0xFF, nt >> 8
+    new += b'\xff' * (stop + 1 - start - len(new))
+    rom[off(bank, start):off(bank, stop) + 1] = new
+    return amap
+
+
+def fix_garbage_text(rom, fl):
+    for (bank, start, stop), edits in GARBAGE[fl]:
+        shrink_text(rom, bank, start, stop, [(a, o, n) for a, o, n in edits], 'garbage %02X:%04X' % (bank, start))
+
+
+def fix_curse_laugh_line(rom, fl):
+    # DQ2, curse-removal NPC (dispatcher $34:8DC7 DQ / $34:8DCF DW; JP $14:C83B -> $14:C8A3) when a
+    # member is cursed: "*: Wow! / This is a new type of / curse that I can't remove. / You have to
+    # excuse me." D8 52 (a short pause with a sound, as in JP) FE "Heh heh heh...". The laugh is a
+    # 5th line in the 4-row window, started right after the pause, and it is drawn over row 1
+    # instead of scrolling: garbled text. JP's message is 4 lines (its first line holds "Wow! This
+    # is a new", the laugh shares the 4th). RPGOne's English is too wide to put the laugh on the
+    # 4th line, so "Wow!" joins the 2nd line instead (FE -> space): 4 lines, the pause and the laugh
+    # unchanged. Layout only; no wording change.
+    s = 0x8E63 if fl == 'dq' else 0x8E6B
+    a = 0x8EB2 if fl == 'dq' else 0x8EBA
+    put(rom, 0x34, a - 3, '3c3450' 'd85200' 'fe' + enc('Heh').hex(), '3c3450' 'd85200' 'fe' + enc('Heh').hex(),
+        'curse laugh: pause + new line (unchanged)')
+    put(rom, 0x34, s, 'fd5f8b' + enc('Wow').hex() + '58' 'fe' + enc('This').hex(),
+        'fd5f8b' + enc('Wow').hex() + '58' '00' + enc('This').hex(), 'curse laugh: "Wow!" joins the next line')
+
+
+def fix_poison_cure_message(rom, fl):
+    # DQ2 battle script for the poison-cure result (index 1 of the spell switch 'D8 10' at
+    # $01:8937; JP $01:DF93 -> $E00C). JP calls the cast message (F1 7B DF) and then restarts
+    # the window on "The poison was removed from X's body!" (D8 03 -> $E015). RPGOne jumped to
+    # the cast message instead (D8 03 -> $8920, which ends with FF) and called the poison text
+    # after it, so the script ended after "X casts ...!" and skipped the battle's common tail, as
+    # in Chance rolls 4 and 7 before v0.3. Same length: call the cast message, restart on $89DE.
+    put(rom, 0x01, 0x89D5, 'd803012089' 'f1de89' 'ff' '233734', 'f12089' 'd80301de89' 'ff' '233734', 'poison cure: call, then restart')
+
+
+# ================================================================ v0.3 stage 3
+# Translation polish and consistency. Names come from the same flavor's own item and monster tables
+# (RPGOne's choice for that flavor), control codes from the Japanese original, wording from RPGOne's
+# text in the other flavor where one exists. Old bytes are asserted in full.
+#
+# Text whose length changes is not moved: the first len(old)-3 bytes of the new text are written in
+# place, then 'FC lo hi' (the expander's goto, handler $09:A1B4: it only reloads the read pointer and
+# writes nothing to the text buffer) jumps to a short stub in zero-filled free space of the same bank,
+# which holds the rest of the new text and 'FC' back to the byte after the old text. The window shows
+# exactly the new text; no other byte of the message moves. Each fix has its own stub addresses, so
+# every fix can be applied or skipped on its own.
+
+def fc(a):
+    assert 0x8000 <= a and 0xFF not in (a & 0xFF, a >> 8), hex(a)
+    return bytes([0xFC, a & 0xFF, a >> 8])
+
+
+def reword(rom, bank, at, old, new, stub, what):
+    old = bytes.fromhex(old) if isinstance(old, str) else bytes(old)
+    new = bytes.fromhex(new) if isinstance(new, str) else bytes(new)
+    put(rom, bank, at, old, old, what)
+    if len(new) == len(old):
+        put(rom, bank, at, old, new, what)
+        return
+    k = len(old) - 3
+    assert k >= 0 and stub, what
+    tail = new[k:] + fc(at + len(old))
+    put(rom, bank, stub, bytes(len(tail)), tail, what + ' (stub)')
+    put(rom, bank, at, old, new[:k] + fc(stub), what)
+
+
+def enct(s):
+    """enc() plus the punctuation used in the names below."""
+    p = {'.': 0x50, ',': 0x51, "'": 0x55, '!': 0x58, '?': 0x59}
+    return b''.join(bytes([p[c]]) if c in p else enc(c) for c in s)
+
+
+# Names in dialogue that disagree with the flavor's own item table ($09:E927/$09:E9FB) or with the
+# flavor's naming elsewhere. (fix id, flavor, [(bank:addr, stub)], old, new); stub None = same length.
+NAMES = [
+    # DQ item table: Gold Key ($55). Dialogue had the DW name Golden Key.
+    ('dq_gold_key', 'dq', [('14:99FF', 0xFA60), ('33:C5FD', 0xE008), ('34:8AF6', 0xE400), ('34:9D89', 0xE408),
+                           ('34:9E80', 0xE410), ('34:9F87', 0xE418), ('34:C9E4', 0xE420), ('34:CAD7', 0xE428)],
+     'Golden Key', 'Gold Key'),
+    # DQ item table: Rain Cloud Staff ($1C). Dialogue and the use message had the DW name Staff of Rain.
+    ('dq_rain_cloud_staff', 'dq', [('01:AE74', 0xFED0), ('01:B1AB', 0xFED9), ('2B:CAAB', 0xD690),
+                                   ('32:D536', 0xFC00), ('32:D573', 0xFC10)], 'Staff of Rain', 'Rain Cloud Staff'),
+    # DQ item table: Warrior's Ring ($23); DW calls it Fighter's Ring.
+    ('dq_warriors_ring', 'dq', [('32:C779', None)], "Fighter's Ring", "Warrior's Ring"),
+    # DQ item table: Sacred Loom ($5C); DW Magic Loom.
+    ('dq_sacred_loom', 'dq', [('34:B20E', 0xE430)], 'Magic Loom', 'Sacred Loom'),
+    # DQ item table: Bell Amulet ($4B); DW Dragon's Bane. The other DQ line ($14:961B) already says Bell Amulet.
+    ('dq_bell_amulet', 'dq', [('33:B97B', 0xE000)], "Dragon's Bane", 'Bell Amulet'),
+    # DQ item table and its use message ($2B:98FA): Statue of Evil ($53); DW Eye of Malroth.
+    ('dq_statue_of_evil', 'dq', [('34:D539', None), ('34:D626', None), ('34:DE8F', None)], 'Eye of Malroth', 'Statue of Evil'),
+    # DQ1 princess: Laura in the DQ flavor (73 lines), Gwaelin in DW.
+    ('dq_laura', 'dq', [('01:C2E0', 0xFEE9)], 'Gwaelin', 'Laura'),
+    # DQ1 final boss after the battle ($00:91B2 -> $01:FE30): DQ dialogue says King Dragon, DW Dragonlord.
+    ('dq_king_dragon_hand', 'dq', [('01:FE56', 0xFEE2)], "Dragonlord's", "King Dragon's"),
+    # Wrong item: $00:BFC3 shows this when item $14 (Dragon's Scale) is already worn (JP $2B:909D, DW the
+    # same line with Dragon's Scale); the DQ line named the Bell Amulet.
+    ('dq_dragon_scale_check', 'dq', [('2B:8CC5', 0xD680)], 'Bell Amulet.', "Dragon's Scale."),
+    # DW item table: Fairy Water ($17/$49); two DQ1 lines had the DQ name Holy Water.
+    ('dw_fairy_water', 'dw', [('01:9B67', 0xFED0), ('01:CAE6', 0xFED7)], 'Holy Water', 'Fairy Water'),
+    # DW town: Hauksness in its three other lines.
+    ('dw_hauksness', 'dw', [('32:F20E', 0xFC20)], 'Haukness', 'Hauksness'),
+    # Wrong prize name: the lottery's 4th prize gives item $4B (E1 E8 00 4B, D8 24), which DW calls
+    # Dragon's Bane (DQ: Bell Amulet, as its line says); the DW line named the Dragon Scale.
+    ('dw_lottery_prize', 'dw', [('2B:C779', 0xD6B0)], 'Dragon Scale!', "Dragon's Bane!"),
+    # Spelling (documented in the audit), both flavors.
+    ('typo_miracle', 'dq', [('34:D5F2', None)], 'mircale', 'miracle'),
+    ('typo_miracle', 'dw', [('34:D5FC', None)], 'mircale', 'miracle'),
+    ('typo_far_too', 'dq', [('2B:BB51', 0xD6A0)], 'far to important', 'far too important'),
+    ('typo_far_too', 'dw', [('2B:BB55', 0xD6A0)], 'far to important', 'far too important'),
+]
+
+
+def name_fix(fid):
+    def fn(rom, fl):
+        for f, nfl, sites, old, new in NAMES:
+            if f != fid:
+                continue
+            for where, stub in sites:
+                b, a = (int(x, 16) for x in where.split(':'))
+                if nfl == fl:
+                    reword(rom, b, a, enct(old), enct(new), stub, '%s %s' % (fid, where))
+    return fn
+
+
+# Lines that name the hero (F4) where JP names the party's lead member (F5 95: the first living member,
+# the one who walks in front), and that can be shown while the hero is dead. (JP address of the F5 95,
+# DQ site, DW site, old bytes from the F4 on, new bytes). Stubs: 8 bytes each from STUB_LEAD[bank].
+LEAD = [
+    # greetings before the level advice, chosen by map (E9 [0021]==...): King of Laurasia "Ahh <name>, You're
+    # back!", priests "Oh <name>, you've returned!" and "Ah <name>, you're back!" (JP $14:82F3/$830C/$8325)
+    ('14:82F3', '14:84AF', '14:84B0', 'f451fe', 'f59551fe'),
+    ('14:830C', '14:84CC', '14:84CD', 'f45100', 'f5955100'),
+    ('14:8325', '14:84EC', '14:84ED', 'f45100', 'f5955100'),
+    # King of Laurasia / priests, flag $0E farewell (JP $14:8662), shared "*:" line
+    ('14:8662', '14:89CE', '14:89CC', 'f458ff', 'f59558ff'),
+    # King of Laurasia, map $35: "Until we meet again, <name>!" (JP $14:86AB)
+    ('14:86AB', '14:8A5E', '14:8A5D', 'f458ff', 'f59558ff'),
+    # King of Laurasia, hero at 0 HP (E9 [0C09]==00): "<name> I ask that you serve my son well." (JP $14:86D1)
+    ('14:86D1', '14:8A9D', '14:8A9D', 'f40018', 'f5950018'),
+    # King of Sumaltria/Cannock, flag $09: "Ah, it's <name>" (JP $14:9C74). DQ also lacked the space
+    # after "it's" that DW has.
+    ('14:9C74', '14:B082', '14:B094', ('f4fe00', 'f450fe'), ('00f595fe00', 'f59550fe')),
+    # same King, flag $AD: "There you are <name>." (JP $14:9D15)
+    ('14:9D15', '14:B172', '14:B18B', 'f450f0', 'f59550f0'),
+    # same King, flag $0B: "Now <name> we will all be waiting." (JP $14:9DD3)
+    ('14:9DD3', '14:B2C6', '14:B2DF', 'f4fe00', 'f595fe00'),
+    # priests (shared save script, JP $14:A839 -> $14:AB20): "Rest well <name>!" (JP $14:AB2F)
+    ('14:AB2F', '14:C8DB', '14:C907', 'f458fe', 'f59558fe'),
+    # priests' farewells (JP $14:AB8B, $14:AB97, $14:ABBC)
+    ('14:AB8B', '14:C969', '14:C996', 'f458ff', 'f59558ff'),
+    ('14:AB97', '14:C976', '14:C9A4', 'f458ff', 'f59558ff'),
+    ('14:ABBC', '14:C9C6', '14:C9F5', 'f458ff', 'f59558ff'),
+    # former Laurasia servant, hero at 0 HP branch: "...a baby, <name>." (JP $14:A474)
+    ('14:A474', '14:BDA7', '14:BDD5', 'f450fe', 'f59550fe'),
+    # messenger, reached from the hero-at-0-HP / prince-alive branch: "Oh is that you <name>?" (JP $14:DD5A)
+    ('14:DD5A', '34:B309', '34:B30F', 'f459fe', 'f59559fe'),
+    # King of Dercondal: "Ah <name>! Welcome to Dercondal Castle!" (JP $14:E87E)
+    ('14:E87E', '34:C481', '34:C481', 'f458fe', 'f59558fe'),
+    # two villagers (JP bank $0F): "Ahh, It's <name>." and "...meet Hargon, <name>," (JP $0F:E6A1, $0F:E9A2)
+    ('0F:E6A1', '33:B6B2', '33:B6C5', 'f450fe', 'f59550fe'),
+    ('0F:E9A2', '33:BC1B', '33:BC3C', 'f451fe', 'f59551fe'),
+    # priest (JP $14:F7FF), before Hargon: "So you have come <name>!" (JP $14:F80B)
+    ('14:F80B', '34:E02E', '34:E038', 'f458f0', 'f59558f0'),
+]
+STUB_LEAD = {0x14: 0xFA70, 0x33: 0xE010, 0x34: 0xE440}
+
+
+def lead_edit(rom, fl, entry):
+    """(address, old, new) for one LEAD entry. Where the name ends its message ('F4 x FF'), the edit
+    starts two text bytes earlier instead, so that the message's FF stays where it is."""
+    jp, dq, dw, old, new = entry
+    b, a = (int(x, 16) for x in (dq if fl == 'dq' else dw).split(':'))
+    o, n = (old[0 if fl == 'dq' else 1], new[0 if fl == 'dq' else 1]) if isinstance(old, tuple) else (old, new)
+    o, n = bytes.fromhex(o), bytes.fromhex(n)
+    if o.endswith(bytes([0xFF])):
+        pre = bytes(rom[off(b, a) - 2:off(b, a)])
+        assert all(c < 0xD8 or c == 0xFE for c in pre), (dq, pre.hex())
+        return b, a - 2, pre + bytes([0xF4]), pre + bytes([0xF5, 0x95])
+    return b, a, o, n
+
+
+def fix_lead_member_names(rom, fl):
+    used = {}
+    for entry in LEAD:
+        b, a, o, n = lead_edit(rom, fl, entry)
+        k = used.get(b, 0)
+        used[b] = k + 1
+        reword(rom, b, a, o, n, STUB_LEAD[b] + 8 * k, 'lead name %02X:%04X' % (b, a))
+
+
+def fix_cannock_king_lead(rom, fl):
+    # King of Sumaltria/Cannock, flag $0A: "Well F5 FE seek out my son, <prince>." F5 FE prints the
+    # string at the pointer in $0CFE/$0CFF (garbage); JP's line ($14:9CEA) has F5 95, the lead member.
+    # Layout: RPGOne wrote the whole line as one row ("King: Well X seek out my son, <prince>."), which the
+    # garbage hid; with the names it is 206-248 pixels wide and wraps mid-name (seen in Mesen: "Rola|ndo").
+    # A line break after the lead's name, followed by a space as in RPGOne's other King lines ("/ I can never
+    # count on you."): "King: Well <lead>" / " seek out my son, <prince>." JP's line also has 3 rows.
+    a = 0xB13A if fl == 'dq' else 0xB153
+    put(rom, 0x14, a, enc('Well').hex() + '00f5fe00' + enc('seek').hex(), enc('Well').hex() + '00f5fe00' + enc('seek').hex(),
+        'Cannock King: F5 FE')
+    reword(rom, 0x14, a + 5, 'f5fe00', 'f595fe00', 0xFA68, 'Cannock King: F5 95, line break')
+
+
+def fix_king_princess_reply(rom, fl):
+    # King of Laurasia, party of three, first meeting with the princess ("Oh, is that the Princess of
+    # Moonbrook?! ... feel free to come and talk with me."): the reply "Thank you, King of ..." is spoken
+    # by the princess in JP ($14:81F1 'F1 92 01', her fixed name). RPGOne named party slot 1 (F1 5F 01),
+    # which v0.2's identity fix turned into the prince's fixed name (F1 89 01): still the wrong speaker.
+    a = 0x831E if fl == 'dq' else 0x8329
+    put(rom, 0x14, a, 'fdf1890152', 'fdf1920152', 'princess reply speaker')
+
+
+FS_STUB = 0xD6C0          # $2B: four 4-byte stubs 'F0 FC lo hi'
+
+
+def fix_field_spell_wait(rom, fl):
+    # DQ2 field spell ($00:CC8E -> $2B:ABE0, both flavors; JP $2B:A5A5). JP shows "<caster> casts <spell>!",
+    # plays the effect, then waits once (F0) at the start of the result: switch D8 23 -> $A610 (F0, "nothing
+    # happened") or the spell dispatch $A5D3, whose results all begin with F0 except spell $1F's. RPGOne put
+    # one F0 after the cast line ($2B:ABF2) and dropped it from the results "nothing happened" ($AC4B), $1A
+    # ($95CA DQ / $95CB DW), $20 ($AC96) and $09/$1D ($AD17), but kept it in the heal results ($ACEE): so the
+    # heal spells needed two button presses and spell $1F one, where JP needs one and none. JP's layout is
+    # restored: the cast-line F0 is removed (the rest of that message, 7 codes up to its FF at $AC0D, moves
+    # up one byte; its switch targets are outside the moved bytes) and the four result paths without F0 go
+    # through a 4-byte stub 'F0 FC <old target>'.
+    put(rom, 0x2B, 0xABE6, 'e5f4' + '00' + enc('casts').hex() + '00f59358f0e1b01002', 'e5f4' + '00' + enc('casts').hex() + '00f59358f0e1b01002',
+        'field spell: cast line')
+    p1a = 0x95CA if fl == 'dq' else 0x95CB
+    paths = [(0xAC09, 0xAC4B, 'D8 23 #0'),                   # operand of D8 23 (before the move below)
+             (0xAC0E + 6 * 5 + 4, p1a, 'spell $1A'), (0xAC0E + 6 * 6 + 4, 0xAC96, 'spell $20'),
+             (0xAC0E + 6 * 7 + 4, 0xAD17, 'spell $09'), (0xAC0E + 6 * 8 + 4, 0xAD17, 'spell $1D')]
+    put(rom, 0x2B, 0xAC0E + 6 * 9, 'e9c4001f51ac', 'e9c4001f51ac', 'field spell: dispatch ends with $1F')
+    stubs = {}
+    for at, tgt, what in paths:
+        if tgt not in stubs:
+            s = FS_STUB + 4 * len(stubs)
+            put(rom, 0x2B, s, '00' * 4, b'\xf0' + fc(tgt), 'field spell: wait stub for ' + what)
+            stubs[tgt] = s
+        put(rom, 0x2B, at, bytes([tgt & 0xFF, tgt >> 8]), bytes([stubs[tgt] & 0xFF, stubs[tgt] >> 8]), 'field spell: ' + what)
+    shrink_text(rom, 0x2B, 0xABF2, 0xAC0D, [(0xABF2, 'f0e1', 'e1')], 'field spell wait')
+
+
+EXP_SITES = {'dq': ['14:8546', '14:85D4', '14:866B', '14:C502', '14:C586', '14:C613', '2B:9E8C', '2B:9F14', '2B:9F9F',
+                    '34:8489', '34:850F', '34:859C'],
+             'dw': ['14:8546', '14:85D3', '14:866A', '14:C52E', '14:C5B2', '14:C63F', '2B:9E9D', '2B:9F1F', '2B:9FA9',
+                    '34:8499', '34:851F', '34:85AC']}
+
+
+def fix_exp_to_next_24bit(rom, fl):
+    # DQ2 "<name>, to reach the next level, you need N experience." N is 24-bit: $0B:9952 stores the
+    # low word at $0C91 and the high byte at $0C93 (threshold - EXP). JP prints it with 'DB 91 0C' at its
+    # 12 matching sites; RPGOne used the 16-bit 'F6 91 00'. The princess's gaps from level 29 up are
+    # 90,000-100,000 EXP (table $0B:B893), so she could be told e.g. 24464 instead of 90000. DQ1 lines
+    # (bank $01) are 16-bit in JP too and are not touched.
+    for where in EXP_SITES[fl]:
+        b, a = (int(x, 16) for x in where.split(':'))
+        o = off(b, a)
+        assert enc('experience') in rom[o + 3:o + 14], 'exp ' + where      # DW's bank-$2B lines have no space
+        put(rom, b, a, 'f69100', 'db910c', 'exp ' + where)
+
+
+def fix_dq1_died_in_battle(rom, fl):
+    # DQ1 King after the party is wiped out: "Oh... <HERO>, it seems you've di... in battle!" ($01:BBBE).
+    # The bytes '60 8B' (an ellipsis and $8B, JP's opening-quote code: a talk sound and an indent mark)
+    # stand where RPGOne's DW line ($01:BBCE) has "ed". DQ only.
+    if fl == 'dq':
+        put(rom, 0x01, 0xBBBE, '3338608b00' + enc('in').hex(), '3338343300' + enc('in').hex(), 'died in battle')
+    else:
+        put(rom, 0x01, 0xBBCE, enc('died').hex(), enc('died').hex(), 'died in battle (DW): already right')
+
+
+def fix_laurasia_king_wait(rom, fl):
+    # King of Laurasia after the party was wiped out: "Pitiful Prince... / I can never count on you."
+    # then flag $03 and a window restart into his next speech. The line ended with FE, so the next
+    # speech followed on the next row with no button wait; JP ($14:8126) ends it with F0. Both flavors.
+    a = 0x8193 if fl == 'dq' else 0x8192
+    put(rom, 0x14, a - 13, enc('count on you').hex() + '50' 'fe' 'ee0300d803', enc('count on you').hex() + '50' 'f0' 'ee0300d803',
+        'pitiful prince wait')
+
+
+TRAILING_2A = [0xD5D9, 0xD783, 0xE0D0, 0xE0E4, 0xE0EB, 0xE0F7]   # $01: Iron Axe, Hade's Shield, Life Crest, Club, Torch, Lithograph
+
+
+def fix_item_name_trailing_break(rom, fl):
+    # DQ only. RPGOne's $2A is the line break inside two-line item names in menus; in a message it is drawn
+    # as a 4-pixel blank. Six names in the DQ item tables ($09:E927/$09:E9FB pointers) end with a $2A, so
+    # messages showed "AAA used the Iron Axe !" (checked in Mesen). The $2A becomes the end mark; the old FF
+    # after it stays. Names are reached only through the pointer tables, so nothing else moves.
+    if fl == 'dq':
+        for a in TRAILING_2A:
+            put(rom, 0x01, a, '2aff', 'ffff', 'item name end %04X' % a)
+
+
+def fix_beer_thief_wait(rom, fl):
+    # DQ only. Thief after Hargon: "Peace has returned to the world. / Can you forgive me for stealing..."
+    # ran straight into "*: Ohh, I've been dying for a beer!" in the same window (FE). JP ($14:97DF) and
+    # RPGOne's DW line wait (F0) first.
+    if fl == 'dq':
+        put(rom, 0x14, 0xA925, enc('stealing').hex() + '60' 'fe' 'fd5f8b', enc('stealing').hex() + '60' 'f0' 'fd5f8b', 'beer thief wait')
+    else:
+        put(rom, 0x14, 0xA93B, enc('stealing').hex() + '60' 'f0' 'fd5f8b', enc('stealing').hex() + '60' 'f0' 'fd5f8b', 'beer thief (DW): already F0')
+
+
+# ================================================================ v0.3 stage 4
+# Final cleanup. Same rules as stage 3: old bytes asserted in full, text whose length changes goes
+# through 'reword' detours with fixed per-fix stubs in zero-filled space, nothing moves.
+
+def fix_field_heal_line_break(rom, fl):
+    # Layout only. The field heal result "<target>'s wounds were healed!" ($2B:ACC9 after an item,
+    # $2B:ACF2 after a spell; both flavors) is one row: 138 px plus the name, and the window holds
+    # 206 px, so names wider than 68 px ("Mmmmmmmm", 87 px) run past the edge and the renderer wraps
+    # "heal|ed!" over the next row (Mesen). RPGOne's battle copies of the line ($01:9A45, $01:ABCB)
+    # break after "wounds"; the field copies now do the same (space -> FE, same length). Widest
+    # possible first row: 8 x 11 px + 58 px = 146 px.
+    for a in (0xACD2, 0xACFB):                       # the space after "wounds"
+        put(rom, 0x2B, a - 11, 'f58f55' + enc('s wounds').hex() + '00' + enc('were healed').hex() + '58fe',
+            'f58f55' + enc('s wounds').hex() + 'fe' + enc('were healed').hex() + '58fe', 'heal line break %04X' % a)
+
+
+# Field messages of Dragon Quest II that name the member in $AE (F4) or in the pointer $0C8F (F5 8F)
+# where JP names the lead member (F5 95). Opening the field command menu clears $AE ($00:904A), and
+# neither the Search code nor the chest handlers ($1B:9413, $1B:9322) set it or $0C8F, so these lines
+# named the hero even at 0 HP (seen in Mesen: "AAA searched all around..." with AAA dead; JP: the
+# lead). (JP address of the F5 95, DQ site, DW site, old bytes, new bytes); stubs 8 bytes from FA_STUB.
+FIELD_LEAD = [
+    ('2B:9FB4', '2B:A380', '2B:A389', 'f40042', 'f5950042'),    # Search, hidden item: "<F4> searched all around..."
+    ('2B:9FD0', '2B:A3A0', '2B:A3A9', 'f40033', 'f5950033'),    # Search at sea: "<F4> dove off the side of the ship!"
+    ('2B:A225', '2B:A6FD', '2B:A6FD', 'f4003e', 'f595003e'),    # drawer: "<F4> opened the drawer and looked inside..."
+    ('2B:A246', '2B:A731', '2B:A731', 'f4003b', 'f595003b'),    # pot: "<F4> looked inside the pot..."
+]
+FA_STUB = 0xD6D0          # $2B: 4 x 8 bytes
+
+
+def fix_field_action_lead(rom, fl):
+    for k, entry in enumerate(FIELD_LEAD):
+        b, a, o, n = lead_edit(rom, fl, entry)
+        reword(rom, b, a, o, n, FA_STUB + 8 * k, 'field lead %02X:%04X' % (b, a))
+    # Trap chest ($C4 = $0A): "Huh? The treasure chest was a trap! <$0C8F> was poisoned!" The code right
+    # after it poisons the first living member ($0C55/$0C56/$0C57 by HP), and JP ($2B:A408) names the lead.
+    # $0C8F is whatever an earlier item or spell left there ($0000 after loading the test state).
+    put(rom, 0x2B, 0xA98E, 'f58f00' + enc('was').hex(), 'f59500' + enc('was').hex(), 'trap chest: poisoned member')
+
+
+# Spelling (approved for stage 4), as NAMES: (fix id, flavor, [(bank:addr, stub)], old, new).
+TYPOS = [
+    ('typo_retrieve', 'dq', [('01:AE0B', None), ('01:B143', None), ('2B:8863', None)], 'retreive', 'retrieve'),
+    ('typo_retrieve', 'dw', [('01:AE0B', None), ('01:B149', None), ('2B:8863', None)], 'retreive', 'retrieve'),
+    ('typo_possession', 'dq', [('2B:A2E5', 0xD6F0), ('32:D7B1', 0xFC30), ('34:9D3B', 0xE460), ('34:B5AD', 0xE468),
+                               ('34:DE7E', 0xE470)], 'possesion', 'possession'),
+    ('typo_possession', 'dw', [('2B:A2EE', 0xD6F0), ('32:D84A', 0xFC30), ('34:9D54', 0xE460), ('34:B5AB', 0xE468),
+                               ('34:DE87', 0xE470)], 'possesion', 'possession'),
+    ('typo_your_arrival', 'dq', [('14:99AD', 0xFAF0)], 'you arrival', 'your arrival'),
+    ('typo_your_arrival', 'dw', [('14:99B8', 0xFAF0)], 'you arrival', 'your arrival'),
+    ('typo_forward', 'dq', [('14:8A74', 0xFAF8), ('34:9466', 0xE478)], 'foward', 'forward'),
+    # DQ only: "<prince>, To reach the next level" (DW's line has no name before it and starts the sentence)
+    ('typo_to_reach_case', 'dq', [('2B:9EF2', None)], 'To reach', 'to reach'),
+    # DW only: the three bank-$2B level-advice lines read "you need 1234experience." (DQ: "1234 experience")
+    ('dw_exp_space', 'dw', [('2B:9EA0', 0xD6F8), ('2B:9F22', 0xD700), ('2B:9FAC', 0xD708)], 'experience', ' experience'),
+]
+
+
+def table_fix(table, fid):
+    def fn(rom, fl):
+        for f, nfl, sites, old, new in table:
+            if f != fid or nfl != fl:
+                continue
+            for where, stub in sites:
+                b, a = (int(x, 16) for x in where.split(':'))
+                reword(rom, b, a, enct(old), enct(new), stub, '%s %s' % (fid, where))
+    return fn
+
+
+def fix_dw_evil_shield_space(rom, fl):
+    # DW only. Item $43 ($09:E927/$09:E9FB -> $01:D78E) is "Evil{2A} Shield": RPGOne's menu line break $2A
+    # plus a space, so the Item menu's second row reads " Shield" and messages "Evil  Shield" (the $2A is a
+    # 4-px blank in messages). RPGOne's other two-line names have no space after the $2A ("Evil{2A}Tree").
+    # The name is reached only through the two pointer tables, so its tail moves up one byte; the old FF stays.
+    if fl == 'dw':
+        put(rom, 0x01, 0xD78E, enc('Evil').hex() + '2a00' + enc('Shield').hex() + 'ff',
+            enc('Evil').hex() + '2a' + enc('Shield').hex() + 'ffff', 'Evil Shield name')
+    # DQ: item $43 is "Hade's Shield" (one line; its trailing $2A is item_name_trailing_break's)
+
+
+# Stray $8B (JP's opening quote) inside RPGOne's sentences, not after a speaker label. The renderer ($00:B25E)
+# plays the talk sound $14 for it and sets the hanging indent; in these lines the effect is an extra talk sound
+# in mid-sentence (the next lines start at the left margin either way: Mesen). Removed through a 5-byte stub
+# 'rest FC back'.
+# (flavor, site of the $8B, the two bytes after it, stub)
+STRAY_8B = [
+    ('dq', '14:81D0', 'fe00', 0xFB00), ('dq', '14:89B6', 'f458', 0xFB08), ('dq', '14:8C6D', 'fe33', 0xFB10),
+    ('dq', '14:8CEC', 'fe33', 0xFB18), ('dq', '14:8D6B', 'fe33', 0xFB20), ('dq', '14:9174', 'f451', 0xFB28),
+    ('dq', '14:B07F', '5542', 0xFB30), ('dq', '2B:81F2', 'fe32', 0xD710), ('dq', '2B:83F1', 'fe28', 0xD718),
+    ('dq', '2B:B152', 'f450', 0xD720), ('dq', '2B:B4BC', 'f458', 0xD728), ('dq', '33:B9C8', '5542', 0xE020),
+    ('dq', '34:A1D5', '5542', 0xE480),
+    ('dw', '14:81CF', 'fe00', 0xFB00), ('dw', '14:8C6D', 'fe33', 0xFB10), ('dw', '14:8CEC', 'fe33', 0xFB18),
+    ('dw', '14:8D6B', 'fe33', 0xFB20), ('dw', '14:9178', 'f451', 0xFB28), ('dw', '14:B090', '5542', 0xFB30),
+    ('dw', '2B:81F2', 'fe32', 0xD710), ('dw', '2B:83F1', 'fe28', 0xD718), ('dw', '2B:B152', 'f450', 0xD720),
+    ('dw', '2B:B4BC', 'f458', 0xD728), ('dw', '33:B9E0', '5542', 0xE020), ('dw', '34:A1F0', '5542', 0xE480),
+]
+
+
+def fix_stray_quote_codes(rom, fl):
+    for sfl, where, nxt, stub in STRAY_8B:
+        if sfl == fl:
+            b, a = (int(x, 16) for x in where.split(':'))
+            reword(rom, b, a, '8b' + nxt, nxt, stub, 'stray $8B %s' % where)
+
+
+# ---------------------------------------------------------------- v0.3 stage 4, RC2 (final cleanup)
+
+def fix_coffin_discard_message(rom, fl):
+    # DQ2 Item menu, Discard on a dead member's item (code $00:BB3x sets flag 2; message $2B:A9BA, JP $2B:A457).
+    # JP $2B:A4CC: 'E9 [00E8]==5A -> A4F2', the text "<lead> takes <item> from <F4>'s coffin and discards it",
+    # 'EE 00' (flag 0: the code then removes the item), FF; at A4F2 the Leaf of the World Tree ($5A) clears flag
+    # $BF and restarts into that text. RPGOne put the FF before the text ($2B:AA66) instead of after it, both
+    # flavors: a normal item gave no message and stayed in the coffin (Mesen), and the Leaf restarted into the
+    # unterminated text forever. Their text also named $0C93 and $0C8F, which the discard code never sets (the
+    # give code does), instead of the lead (F5 95) and the coffin's owner (F4, $AE), as JP. JP's order is
+    # restored: the text moves up one byte over the stray FF, the FF follows 'EE 00 00', the Leaf branch at
+    # $AA9F stays where the E9 points and its D8 03 now restarts at $AA66. Names: F5 93 -> F5 95, and
+    # 'F5 8F s' -> 'F4 ' s' (same length; this also adds the line's missing apostrophe).
+    text = (bytes.fromhex('e5f593') + enct(' took the ') + bytes.fromhex('fefdf58d') + enct(' from ')
+            + bytes.fromhex('fdf58f42') + enct(' coffin') + bytes.fromhex('fefd') + enct('and discarded it.'))
+    new_text = text.replace(bytes.fromhex('e5f593'), bytes.fromhex('e5f595')).replace(bytes.fromhex('fdf58f42'), bytes.fromhex('fdf45542'))
+    old = bytes.fromhex('e9e8005a9faa') + b'\xff' + text + bytes.fromhex('ee0000') + bytes.fromhex('efbf00') + bytes.fromhex('d8030167aa')
+    new = bytes.fromhex('e9e8005a9faa') + new_text + bytes.fromhex('ee0000') + b'\xff' + bytes.fromhex('efbf00') + bytes.fromhex('d8030166aa')
+    assert len(old) == len(new)
+    assert new.index(bytes.fromhex('efbf00')) == 0xAA9F - 0xAA60, 'Leaf branch must stay at $AA9F'
+    put(rom, 0x2B, 0xAA60, old, new, 'coffin discard: JP order and names')
+
+
+def fix_coffin_give_both_dead(rom, fl):
+    # DQ2 Item menu, Give from a dead member to a dead member (flags 8 and 9; message $2B:AB05 both flavors, JP
+    # $2B:A534): JP "<lead> takes <item> from <giver>'s coffin and puts it into <receiver>'s coffin". The give
+    # code sets $0C93 = giver ($00:BBCA) and $0C8F = receiver ($00:BC6E). Seen in Mesen with the hero and Linda
+    # dead, AAA giving to Linda: DQ "Linda took the Leather Armor from AAA's coffin, and placed it into Linda's
+    # coffin." (the dead receiver acts); DW "Rolando took the Leather Armor from Linda's coffin, and placed it
+    # into AAAs coffin." (giver and receiver swapped, apostrophe missing).
+    if fl == 'dq':
+        put(rom, 0x2B, 0xAB05, 'e5f58f00' + enct('took').hex(), 'e5f59500' + enct('took').hex(), 'give both dead: actor = lead')
+    else:
+        put(rom, 0x2B, 0xAB1C, 'fdf58f5542', 'fdf5935542', 'give both dead: from the giver')
+        reword(rom, 0x2B, 0xAB3E, 'f59342', 'f58f5542', 0xD730, 'give both dead: into the receiver')
+
+
+# Possessives written without the apostrophe after a name code ("<name>s coffin"). (flavor, address of the
+# 's', stub); each 's' and the two bytes after it become "'s" + the same two bytes through an 8-byte-spaced
+# stub. The coffin lines at $2B:AA7F (both) and DW $2B:AB3E get theirs from the two coffin fixes above.
+POSSESSIVE = {
+    'dq': [('14:BC3E', 0xFB38), ('2B:89E9', 0xD740), ('2B:8A12', 0xD748), ('2B:9294', 0xD750), ('2B:92E9', 0xD758),
+           ('2B:94DD', 0xD760), ('2B:963C', 0xD768), ('2B:9A4D', 0xD770), ('2B:B658', 0xD778), ('2B:B689', 0xD780),
+           ('2B:B6C8', 0xD788), ('2B:C8AD', 0xD790), ('2B:CA14', 0xD798), ('33:A7A7', 0xE028)],
+    'dw': [('14:BC69', 0xFB38), ('2B:89E9', 0xD740), ('2B:8A12', 0xD748), ('2B:9293', 0xD750), ('2B:92E8', 0xD758),
+           ('2B:94DC', 0xD760), ('2B:963F', 0xD768), ('2B:B65C', 0xD778), ('2B:B68D', 0xD780), ('2B:B6CC', 0xD788),
+           ('2B:C8B5', 0xD790), ('2B:CA1C', 0xD798), ('33:A7A7', 0xE028)],
+}
+NAME_CODE_LEN = {0xF4: 1, 0xF5: 2, 0xF1: 3}
+
+
+def fix_typo_possessive(rom, fl):
+    for where, stub in POSSESSIVE[fl]:
+        b, a = (int(x, 16) for x in where.split(':'))
+        o = off(b, a)
+        assert any(rom[o - n] == c for c, n in NAME_CODE_LEN.items()), 'possessive %s: no name code before the s' % where
+        nxt = bytes(rom[o + 1:o + 3])
+        assert all(c < 0xD8 or c in (0xFE, 0xFD, 0xF0) for c in nxt), where
+        reword(rom, b, a, bytes([0x42]) + nxt, bytes([0x55, 0x42]) + nxt, stub, 'possessive %s' % where)
+
+
 FIXES = [('title_idle', fix_title_idle), ('names', fix_names), ('leaf', fix_leaf),
          ('dragonlord', fix_dragonlord), ('dq1_level30_save', fix_dq1_level30_save),
          ('dq1_princess_love', fix_dq1_princess_love), ('dq1_king_victory', fix_dq1_king_victory),
          ('status_view', fix_status_view), ('king_prince', fix_king_prince),
-         ('dq1_princess_farewell', fix_dq1_princess_farewell)]
+         ('dq1_princess_farewell', fix_dq1_princess_farewell),
+         # v0.3 stage 1
+         ('orb_after_hargon', fix_orb_after_hargon), ('nun_after_hargon', fix_nun_after_hargon),
+         ('flute_crests', fix_flute_crests), ('king_prince_party3', fix_king_prince_party3),
+         ('chance', fix_chance), ('chance_confused_attack', fix_chance_confused_attack),
+         ('dq1_transform', fix_dq1_transform),
+         # v0.3 stage 2
+         ('item_menu_name', fix_item_menu_name), ('beran_inn_price', fix_beran_inn_price),
+         ('vault_balance', fix_vault_balance), ('vault_balance_layout', fix_vault_balance_layout),
+         ('after_hargon_villagers', fix_after_hargon_villagers),
+         ('garbage_text', fix_garbage_text), ('curse_laugh_line', fix_curse_laugh_line),
+         ('poison_cure_message', fix_poison_cure_message),
+         # v0.3 stage 3
+         ('field_spell_wait', fix_field_spell_wait), ('exp_to_next_24bit', fix_exp_to_next_24bit),
+         ('king_princess_reply', fix_king_princess_reply), ('cannock_king_lead', fix_cannock_king_lead),
+         ('lead_member_names', fix_lead_member_names)]
+FIXES += [(fid, name_fix(fid)) for fid in dict.fromkeys(f for f, *_ in NAMES)]
+FIXES += [('dq1_died_in_battle', fix_dq1_died_in_battle), ('laurasia_king_wait', fix_laurasia_king_wait),
+          ('beer_thief_wait', fix_beer_thief_wait), ('item_name_trailing_break', fix_item_name_trailing_break)]
+# v0.3 stage 4
+FIXES += [('field_heal_line_break', fix_field_heal_line_break), ('field_action_lead', fix_field_action_lead)]
+FIXES += [(fid, table_fix(TYPOS, fid)) for fid in dict.fromkeys(f for f, *_ in TYPOS)]
+FIXES += [('dw_evil_shield_space', fix_dw_evil_shield_space), ('stray_quote_codes', fix_stray_quote_codes)]
+FIXES += [('coffin_discard_message', fix_coffin_discard_message), ('coffin_give_both_dead', fix_coffin_give_both_dead),
+          ('typo_possessive', fix_typo_possessive)]
+V03_STAGE1 = ['orb_after_hargon', 'nun_after_hargon', 'flute_crests', 'king_prince_party3',
+              'chance', 'chance_confused_attack', 'dq1_transform']
+V03_STAGE2 = ['item_menu_name', 'beran_inn_price', 'vault_balance', 'vault_balance_layout',
+              'after_hargon_villagers', 'garbage_text', 'curse_laugh_line', 'poison_cure_message']
+_S4 = [fid for fid, _ in FIXES].index('field_heal_line_break')
+V03_STAGE3 = [fid for fid, _ in FIXES[FIXES.index(('field_spell_wait', fix_field_spell_wait)):_S4]]
+V03_STAGE4 = [fid for fid, _ in FIXES[_S4:]]
+V03 = V03_STAGE1 + V03_STAGE2 + V03_STAGE3 + V03_STAGE4
 
 
 def bps_create(src, dst):
@@ -293,6 +1160,8 @@ def main():
     ap.add_argument('--mziab', default=os.path.join(ROOT, 'work', 'dq12fix_%s.bps'),
                     help='mziab title fix BPS, %%s = dq or dw')
     ap.add_argument('--release', default=None, help='folder to write the release patches into')
+    ap.add_argument('--out', default=os.path.join(ROOT, 'work', 'out'),
+                    help='folder for the built ROMs and patches (default work/out)')
     a = ap.parse_args()
     only = set(filter(None, a.only.split(',')))
     skip = set(filter(None, a.skip.split(',')))
@@ -306,9 +1175,11 @@ def main():
                 continue
             fn(rom, fl)
             applied.append(fid)
-        outdir = os.path.join(ROOT, 'work', 'out', fl)
+        outdir = os.path.join(a.out, fl)
         os.makedirs(outdir, exist_ok=True)
         tag = '' if not (only or skip) else '_' + '-'.join(applied)
+        if len(tag) > 80:                    # Windows path limit: name the subset by size and checksum
+            tag = '_%dfixes_%08x' % (len(applied), zlib.crc32(','.join(applied).encode()))
         rom = bytes(rom)
         open(os.path.join(outdir, 'fixed_%s%s.sfc' % (fl, tag)), 'wb').write(rom)
         ips = patchlib.ips_create(jp, rom)

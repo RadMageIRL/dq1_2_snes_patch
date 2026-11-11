@@ -16,10 +16,11 @@ under [Credits](#credits) at the end of this page.
 **mziab fixed the broken Dragon Quest I title screen in 2012.** That fix is his. It is
 included unchanged, byte for byte, and this patch applies it before anything of mine.
 
-Their wording is not changed, with three exceptions, all listed below: one line in the
-Dragonlord's speech that printed stray digits, one stray digit in the Princess's Love
-message, and one new menu word, "View", in the Dragon Quest II Status menu. Everything
-else I changed is code, pointers, control bytes, or which name a line prints.
+Their wording is kept. The exceptions are listed below: a stray digit in the Princess's
+Love message, a new menu word, "View", in the Dragon Quest II Status menu, and in v0.3
+spelling mistakes, names that disagree with the same flavor's own item list or with the
+rest of its script, and a few broken lines rebuilt from RPGOne's own wording. Everything
+else I changed is code, pointers, control bytes, line breaks, or which name a line prints.
 
 ---
 
@@ -58,23 +59,29 @@ two parts now come to at most 168 and 149 bytes.
 
 ![Before and after, with the hero named Rad and the prince Rolando: in RPGOne v2.0 the screen goes black after "It was wrong of me to tell you not to worry." and the game hangs; with this patch the speech goes on to "Rolando: Now let's go!"](screenshots/leaf-softlock.png)
 
-### Dragon Quest I: the Dragonlord's offer loops (both flavors)
+### Dragon Quest I: the Dragonlord (DQ flavor; corrected in v0.3)
 
-**What you see.** Talking to the Dragonlord, his speech repeats from the start after
-"Will you be my ally?" ("I am the King of Kings..." again), and one line reads
-"What do you say,51,, boy?". This is the "nonsensical remark taken from the King's
-dialogue" in one of the reviews.
+**A correction first.** Versions 0.1 and 0.2 of this page said that the Dragonlord's
+offer looped and printed "What do you say,51,, boy?", and that this patch fixed it.
+That is true of a copy of his speech in bank `$01` (`$01:CB37`), but the game never
+shows that copy. The conversation you actually have is RPGOne's version in bank `$32`
+(`$32:E518` DQ, `$32:E5CC` DW), and it already works in v2.0. The v0.1 change to the
+unused copy is harmless and stays in the patch, but it fixed nothing a player could see.
+The screenshot that showed it came from a test build and has been removed.
 
-**Why.** The same 256-byte limit. This speech is 259 bytes even with an empty hero
-name, so the Yes/No command at its end crosses byte 255 and reads its targets from the
-wrong place. The ",51,," is two digit characters (`$06 $02`) in the line itself.
+**What you see.** If you refuse his offer twice, the text between the two battles is a
+fragment of his "accept" speech ("u half of the world of darkness! Now your journey is
+over... WA HA HA HA!"), and none of the transformation's sound effects play.
 
-**What I changed.** I rewrote the message in place: the same text, a split after the
-second page, and "What do you say..." for the garbled line, which is the wording
-RPGOne used in their other copy of this speech elsewhere in the ROM. The Yes/No
-targets do not move. Both answers now work.
+**Why.** The game finds that text through a pointer in the code (`$00:9186`). RPGOne
+moved the scene to bank `$32` and updated the pointer in the DW flavor, but in the DQ
+flavor it still points at the Japanese address, where other text now sits. RPGOne's DQ
+translation of the scene (`$32:EA3E`) was never shown, and its line breaks were never
+finished.
 
-![Before and after: "What do you say,51,, boy?" in RPGOne v2.0, "What do you say..." with this patch](screenshots/dragonlord-offer.png)
+**What I changed.** The pointer now leads to a copy of RPGOne's DQ scene ("King Dragon's
+form gradually disappears... What! King Dragon's true form is revealed!") with the line
+breaks of their DW version. The story flags and sound effects are the Japanese game's.
 
 ### Dragon Quest II: names swapped while the prince is sick (both flavors)
 
@@ -127,16 +134,19 @@ the inn again while he is in your party, and talking to him plays his joining sc
 second time. RPGOne's readme calls this the "clone prince", partly fixed in v2.0.
 
 **Why.** The King of Midenhall picks what to say with a list of checks. In the Japanese
-script a party of two (the prince has joined) goes straight to "You've returned safely"
-(`$14:802B`). RPGOne's pointers for that case, and for the one used while the prince is
-ill, land five bytes early (`$14:8004`, `$14:8024`), on the check before it. So once
-Cannock has told you that the prince left for Midenhall, the King repeats "A short time
-ago, the Prince of Cannock came looking for you" and sets the flag that puts the prince
-in the Leftwyne inn.
+script every case where the prince has already joined goes straight to "You've returned
+safely" (`$14:802B`). RPGOne's pointers for those cases land five bytes early, on the
+check before it. So once Cannock has told you that the prince left for Midenhall, the
+King repeats "A short time ago, the Prince of Cannock came looking for you" and sets the
+flag that puts the prince in the Leftwyne inn. There are four such pointers: a party of
+two and the prince's illness (`$14:8004`, `$14:8024`), and two for a party of three
+(`$14:81A2`, `$14:81A8` in the DQ flavor, one byte earlier in DW).
 
-**What I changed.** Pointed both at the greeting, as the Japanese script does. Visiting
-the King alone after Cannock still gives you that speech, which is how the prince gets
-to Leftwyne in the first place.
+**What I changed.** Pointed all four at the greeting, as the Japanese script does.
+v0.2 fixed only the first two and said the bug was gone; with the princess in the party
+the King still repeated the speech. v0.3 fixes the other two. Visiting the King alone
+after Cannock still gives you that speech, which is how the prince gets to Leftwyne in
+the first place.
 
 ![Before and after: in RPGOne v2.0 the prince stands in the Leftwyne inn while he is in the party; with this patch the inn is empty](screenshots/second-prince.png)
 
@@ -219,6 +229,91 @@ instructions and left the fifth behind, so the CPU ran it as a different instruc
 and the wait loop started from 0 instead of 3,100 frames. I restored the missing
 `LDY #$0000` in a small stub and turned the leftover byte into a `NOP`.
 
+### Fixed in v0.3
+
+For v0.3 I compared RPGOne's script with the Japanese one wherever a line can go wrong:
+its control codes, pointers and the names it prints. Each fix below follows the
+Japanese script, or RPGOne's own text in the other flavor or elsewhere in the same one.
+Both flavors unless marked.
+
+**Conversations that never end, or end too early (Dragon Quest II)**
+
+- After Hargon, the Descendant's Orb asked its question forever: answering Yes ran on
+  into the No text, which asks again.
+- After Hargon, a nun repeated "Thanks to you, the people have been saved." forever (DQ).
+- After Hargon, one villager line began with the end of an unrelated line ("...open that
+  treasure chest!") in DQ, or with 32 blank spaces in DW.
+- The curse-removal man's "Heh heh heh..." was drawn over the first line of his window.
+- The King of Midenhall's "I can never count on you." and the thief's apology (DQ) ran
+  straight into the next speech without waiting for a button.
+
+**Spells and items (Dragon Quest II)**
+
+- The Echoing Flute echoed only until the first crest was found, then never again at
+  the other four crest sites.
+- Chance: three of its eight outcomes broke. "The monsters flee" and "everyone recovers"
+  ended the battle after the casting line, with no experience and the battle music left
+  playing. "Confusion" confused one monster and printed a stray "damage!", and a confused
+  monster's attack could print garbled Japanese and end the battle. All eight now work
+  as in the Japanese game, and the recovery lines name each party member instead of the
+  caster twice.
+- Field spells: after a Heal-type spell you pressed the button twice before the result
+  instead of once. Every spell result now waits where the Japanese game waits.
+- Opening the Item menu could overwrite the 7th letter of the princess's name, and saving
+  kept it.
+- The battle script for curing poison had the same slip as Chance. No spell in the battle
+  menu reaches it, so it was never seen; it is fixed anyway.
+- Discarding an item from a dead member's coffin did nothing: no message, and the item
+  stayed. Discarding the Leaf of the World Tree that way repeated its message forever.
+  The message ended before its text instead of after it; it now ends as in the Japanese
+  game, so the item is discarded and the leader is named as the one who does it.
+
+**Numbers (Dragon Quest II)**
+
+- Beran inn: "One night is N gold." printed a leftover number instead of the price (DQ).
+- Vault: deposits and balances over 65,535 gold printed wrong. They now print in full,
+  and the balance has its own line so that large amounts fit.
+- "To reach the next level, you need N experience" printed wrong numbers over 65,535,
+  which the princess reaches from level 29. DW also printed "1234experience" without a
+  space.
+
+**Names**
+
+- Lines where the Japanese script names the party's leader but the English one named
+  the hero now name the leader, so a dead hero is no longer welcomed back or sent off:
+  kings, priests and villagers (19 lines), and searching, drawers, pots and the trap
+  chest in the field. The trap chest named whatever an earlier item or spell had left
+  behind, or printed garbage.
+- The King of Cannock's "Well &lt;name&gt;, seek out my son" printed garbage instead of the
+  name.
+- When the princess first meets the King of Midenhall, her reply was labelled with the
+  prince's name.
+- Giving an item from one dead member's coffin to another's named a dead member as the
+  one doing it (DQ), or had the two coffins the wrong way round (DW). The leader now
+  moves it, from the giver's coffin to the receiver's.
+- Names that disagreed with the flavor's own item list or the rest of its script. DQ:
+  Golden Key to Gold Key, Staff of Rain to Rain Cloud Staff, Fighter's Ring to Warrior's
+  Ring, Magic Loom to Sacred Loom, Eye of Malroth to Statue of Evil, Dragon's Bane to Bell
+  Amulet (one line), Gwaelin to Laura, "the Dragonlord's hand" to "the King Dragon's
+  hand". DW: Holy Water to Fairy Water, Haukness to Hauksness.
+- Wrong items named: wearing the Dragon's Scale gave "You're already wearing the Bell
+  Amulet" (DQ), and the lottery's fourth prize was announced as the Dragon Scale but gives
+  the Dragon's Bane (DW).
+
+**Text**
+
+- RPGOne's literal codes such as ",60," and ",fe" printed as text in 28 places (23 in DW).
+- Dragon Quest I: "you've di... in battle" reads "died" (DQ).
+- Six item names ended in a menu line break that showed as a gap in messages ("Iron Axe
+  !", DQ); the DW name "Evil Shield" had a double space.
+- The field line "&lt;name&gt;'s wounds were healed!" ran off the window with wide 8-letter
+  names. It now breaks after "wounds", as RPGOne's battle version does.
+- Spelling: miracle, "far too", retrieve, possession, "your arrival", forward (DQ), and
+  "to reach" after a name (DQ).
+- Possessives after a name had no apostrophe, such as "Rolandos complexion" and
+  "&lt;name&gt;s coffin" (15 lines in each flavor).
+- A stray quote code played an extra talk sound in the middle of 13 DQ and 12 DW lines.
+
 ---
 
 ## Known issues this patch does not fix
@@ -235,8 +330,6 @@ and the wait loop started from 0 instead of 3,100 frames. I restored the missing
   the end, the King's ending text is in English and follows the Japanese script.
   RPGOne's v1.1 notes list "Missing pointer for rescuing Princess after the defeat of
   Dragonlord fixed", so the report probably describes an older version.
-- **"Rolandos complexion"** in the DQ flavor's Leaf scene is missing its apostrophe.
-  That is RPGOne's text and I left it.
 - **The Snes9x freeze after battle** that one review fixed by turning off CPU sound
   emulation. I did not reproduce it in Mesen 2, and a full playthrough of both games
   in a current Snes9x had no freezes.
@@ -272,23 +365,23 @@ Patched ROM:
 
 | | Size | CRC32 | SHA-1 |
 |---|---|---|---|
-| DQ, headerless | 2,097,152 | `69567056` | `10b4409285b2984095357195c02ed55c541d20d3` |
-| DQ, headered | 2,097,664 | `741A30BD` | `804348fba81090ff5f9d44df81cc09f675b996a2` |
-| DW, headerless | 2,097,152 | `D1BA0360` | `dfb3ec3d61fcf9bb892314d760bfa82f0c831703` |
-| DW, headered | 2,097,664 | `CCF6438B` | `632812467780a4d7dc311fb9517e4eab1082e6c0` |
+| DQ, headerless | 2,097,152 | `980562DD` | `507c7f56c3addc4df70b5ac7d996b56c8a0898fb` |
+| DQ, headered | 2,097,664 | `85492236` | `3bea9d323e8440ba6f8921b7dca3fb3689ebf901` |
+| DW, headerless | 2,097,152 | `501565D5` | `2642f056964ce80622de8a87e4872910137d4f98` |
+| DW, headered | 2,097,664 | `4D59253E` | `7e328b1d7817807197aabfc26310f92437d518c7` |
 
 Patch files (SHA-1):
 
 | File | SHA-1 |
 |---|---|
-| `dq1-2-fixed-patch-radmageirl-dq.bps` | `45b6b17945aeeab002738acf8a2616be71a93678` |
-| `dq1-2-fixed-patch-radmageirl-dq.ips` | `afa78b42540589b2164d77d2e1fb57b3622168b1` |
-| `dq1-2-fixed-patch-radmageirl-dw.bps` | `a991b8ed9d7e011709d5ebf6177b65531055c05c` |
-| `dq1-2-fixed-patch-radmageirl-dw.ips` | `f0d501b90f1c6ca52db14bfd4aee4a41052d45e0` |
-| `headered/dq1-2-fixed-patch-radmageirl-dq-headered.bps` | `90d62d5591f94ad05f62d4b11fbe18f3a66945e6` |
-| `headered/dq1-2-fixed-patch-radmageirl-dq-headered.ips` | `196c715eae540126f64a6ebb9f7ee87e860f9c50` |
-| `headered/dq1-2-fixed-patch-radmageirl-dw-headered.bps` | `1432cf54c80519b246d895611bda5f2543115f42` |
-| `headered/dq1-2-fixed-patch-radmageirl-dw-headered.ips` | `3b416031fcb55e91ba28da2c65a9fab4f8d2e218` |
+| `dq1-2-fixed-patch-radmageirl-dq.bps` | `827ea974e8f89b5004960acd5a7c9a42275a35e1` |
+| `dq1-2-fixed-patch-radmageirl-dq.ips` | `8bd07f95b318512ccd743561ceaea3d47803e3cf` |
+| `dq1-2-fixed-patch-radmageirl-dw.bps` | `267dda6987cd446433d79d29746a6a0b924ba505` |
+| `dq1-2-fixed-patch-radmageirl-dw.ips` | `107503583ca159d33aaf71919303c05d54c48e36` |
+| `headered/dq1-2-fixed-patch-radmageirl-dq-headered.bps` | `5890b6a6c13c3bbbc7a4c84a11981106dce8e8d5` |
+| `headered/dq1-2-fixed-patch-radmageirl-dq-headered.ips` | `62afb0c908202c6dfcdce30a7e6b422b99ae0b02` |
+| `headered/dq1-2-fixed-patch-radmageirl-dw-headered.bps` | `dae26e5a207159685a4eec67fc1c6f6dea134443` |
+| `headered/dq1-2-fixed-patch-radmageirl-dw-headered.ips` | `4a4a0a23a989a1854b1d898688fbbfc19368c218` |
 
 ---
 
@@ -323,6 +416,20 @@ For the 256-byte limit I also scanned the whole script, following every branch. 
 the fixes, the only message it finds that crosses byte 255 because of long names is a
 second copy of the Dragonlord's speech in bank `$32` that I found no reference to.
 
+For v0.3, the fixes that change what happens in play were reproduced first and checked
+again after the change, in Mesen 2 with short scripted runs from save states: real
+battles for Chance, the real Charlock throne room for the Dragonlord, the field menu for
+spells, a real Search for a hidden item, and test builds that start a single message
+where reaching it in play would take hours. The Japanese ROM was run the same way
+wherever it has the same scene. Text-only changes were checked by decoding the script,
+with a sample of each kind shown in Mesen. Beyond that,
+`tools/check_fixes.py` runs 297 static checks without an emulator: each fixed script is
+walked as the game runs it and compared with the Japanese one, every changed byte must
+belong to exactly one fix, and skipping all v0.3 fixes must rebuild v0.2 byte for byte.
+`tools/check_patches.py` applies the eight released patches with its own IPS and BPS
+code and compares the results with the build. This is targeted testing, not a new full
+playthrough.
+
 ---
 
 ## Rebuilding
@@ -336,7 +443,9 @@ python tools/build.py --jp "Dragon Quest 1 & 2 (J).smc" \
 
 It takes your own Japanese ROM (headered or not), RPGOne's v2.0 IPS files and mziab's
 BPS files, checks the CRC32 at every stage, applies each fix only after confirming the
-bytes it replaces, and writes the patches. `tools/chunkscan.py` is the 256-byte scanner
+bytes it replaces, and writes the patches. Every fix has an id, so `--only` and `--skip`
+build any subset. `tools/check_fixes.py` and `tools/check_patches.py` take the same
+inputs and run the checks described above. `tools/chunkscan.py` is the 256-byte scanner
 and `tools/txt.py` decodes the script.
 
 ---
@@ -364,6 +473,12 @@ the Dragon Quest I ending after the original staff.
 ### Title screen fix v1.0 (2012): mziab
 
 The Dragon Quest I title screen fix, included unchanged.
+
+### Comparison: Rod Mérida's DQ1n2Fix (2021)
+
+Several v0.3 fixes cover bugs that Rod Mérida's DQ1n2Fix patch for the DQ flavor also
+fixes; comparing against it and its readme helped find them. Each fix here was made
+independently from the Japanese script, and no data from his patch is used.
 
 ### Dragon Quest I+II (1993): Enix
 
