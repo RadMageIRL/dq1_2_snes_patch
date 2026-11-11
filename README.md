@@ -5,6 +5,14 @@ RPGOne's English translation v2.0, mziab's title screen fix, and my fixes for th
 players have reported in that translation, including the Leaf of the World Tree
 softlock in Dragon Quest II.
 
+If you know Rod Mérida's DQ1n2Fix patch (2021, DQ names only): since v0.3 this patch
+also fixes most of the bugs his patch fixes, such as the endless conversations after
+Hargon, the princess's name changing in the Item menu, the second prince with a party of
+three, the vault amounts and the Beran inn price. It also fixes bugs that are still in
+his patch: the Echoing Flute after the first crest, the Chance spell, and the Dragon
+Quest I Dragonlord's transformation text. His renames, name generator, splash screens
+and font changes are not part of this patch. See [Credits](#credits).
+
 ---
 
 ## Most of this is someone else's work
