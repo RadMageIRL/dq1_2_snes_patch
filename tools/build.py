@@ -1046,6 +1046,490 @@ def fix_typo_possessive(rom, fl):
         reword(rom, b, a, bytes([0x42]) + nxt, bytes([0x55, 0x42]) + nxt, stub, 'possessive %s' % where)
 
 
+# ---------------------------------------------------------------- v0.4 stage 1: companion names
+# New game ($09:AFBF, JP code kept by RPGOne) copies the hero name to $0156 and sums its bytes into $02,
+# then calls $30:8E00 (prince) with X = ((sum >> 3) & 7) * 4 and $30:8F00 (princess) with X = (sum & 7) * 4.
+# JP used those indices on two 8-name tables; RPGOne's routines ignore X and pick by the first letter.
+# This replaces RPGOne's two routines inside RPGOne's own block $30:8E00-$8FFF:
+#   DQ: the JP rule (the X from $09), English transliterations of the JP names.
+#   DW: NES Dragon Warrior II's rule and names (PRG $1ACEB/$1AD39): the hero name in NES codes, padded
+#       with $60 to 8, added with one CLC in the order 3,7,2,6,1,5,0,4; prince = sum & 7,
+#       princess = (sum >> 3) & 7.
+#   Both: RPGOne's eggs first (prefix RPGONE -> Square / Enix, prefix Zeke -> Anthony / Alyssa).
+# Only new game reaches this code; the hidden rename ($09:B0AC / $09:B0E7) does not.
+
+def asm(src, labels=None):
+    """Two-pass assembler for the few 65816 forms used below (8-bit A unless an immediate has
+    4 hex digits, 16-bit X/Y; DB = $30). Returns ([(org, bytes)], labels)."""
+    imp = {'PHB': 0x8B, 'PHX': 0xDA, 'PHY': 0x5A, 'PHK': 0x4B, 'PLB': 0xAB, 'PLX': 0xFA, 'PLY': 0x7A,
+           'PHA': 0x48, 'PLA': 0x68, 'RTL': 0x6B, 'RTS': 0x60, 'INX': 0xE8, 'INY': 0xC8, 'CLC': 0x18,
+           'SEC': 0x38, 'TAX': 0xAA, 'XBA': 0xEB, 'ASL': 0x0A, 'LSR': 0x4A, 'DEC': 0x3A}
+    imm = {'REP': 0xC2, 'SEP': 0xE2, 'LDA': 0xA9, 'LDX': 0xA2, 'LDY': 0xA0, 'CMP': 0xC9, 'CPX': 0xE0,
+           'CPY': 0xC0, 'ADC': 0x69, 'SBC': 0xE9, 'AND': 0x29}
+    mem = {('JSR', ''): 0x20, ('JMP', ''): 0x4C, ('LDA', 'X'): 0xBD, ('LDA', 'Y'): 0xB9, ('LDY', 'X'): 0xBC,
+           ('CMP', 'X'): 0xDD, ('CMP', 'Y'): 0xD9, ('STA', 'LX'): 0x9F, ('LDA', 'S'): 0xA3, ('ADC', 'S'): 0x63}
+    rel = {'BEQ': 0xF0, 'BNE': 0xD0, 'BCC': 0x90, 'BCS': 0xB0, 'BRA': 0x80}
+    lab = dict(labels or {})
+
+    def val(x, final):
+        if x.startswith('$'):
+            return int(x[1:], 16)
+        x, _, add = x.partition('+')
+        return (lab[x] if final else lab.get(x, 0x8000)) + int(add or 0)
+
+    def one_pass(final):
+        segs, pc, out = [], None, None
+        for raw in src.splitlines():
+            line = raw.split(';')[0].strip()
+            if not line:
+                continue
+            if line.startswith('ORG '):
+                if out is not None:
+                    segs.append((org, bytes(out)))
+                org = pc = int(line[5:], 16)
+                out = bytearray()
+                continue
+            if line.endswith(':'):
+                name = line[:-1]
+                assert not final or lab[name] == pc, name
+                lab[name] = pc
+                continue
+            op, _, arg = line.partition(' ')
+            arg = arg.strip()
+            if op == 'DB':
+                b = bytes(int(x, 16) for x in arg.split())
+            elif op == 'DW':
+                b = b''.join(val(x.strip(), final).to_bytes(2, 'little') for x in arg.split(','))
+            elif arg in ('', 'A'):
+                b = bytes([imp[op]])
+            elif arg.startswith('#'):
+                v = arg[1:]
+                n = (len(v) - 1) // 2 if v.startswith('$') else 2
+                b = bytes([imm[op]]) + val(v, final).to_bytes(n, 'little')
+            elif op in rel:
+                d = val(arg, final) - (pc + 2)
+                assert not final or -128 <= d <= 127, 'branch out of range: ' + line
+                b = bytes([rel[op], d & 0xFF])
+            else:
+                base, _, idx = arg.partition(',')
+                if base.startswith('$') and len(base) == 7:
+                    b = bytes([mem[(op, 'L' + idx)]]) + int(base[1:], 16).to_bytes(3, 'little')
+                elif idx == 'S':
+                    b = bytes([mem[(op, 'S')], int(base[1:], 16)])
+                else:
+                    b = bytes([mem[(op, idx)]]) + val(base, final).to_bytes(2, 'little')
+            out += b
+            pc += len(b)
+        segs.append((org, bytes(out)))
+        return segs
+
+    one_pass(False)
+    return one_pass(True), lab
+
+
+# DQ: transliterations of the JP lists at $09:B06C / $09:B08C, in JP order (index 0-7).
+COMPANIONS = {
+    'dq': (['Rand', 'Kain', 'Arthur', 'Conan', 'Cookie', 'Tonnura', 'Sukesan', 'Paulo'],
+           ['Airin', 'Maria', 'Nana', 'Akina', 'Purin', 'Maiko', 'Linda', 'Samantha']),
+    # DW: NES Dragon Warrior II, PRG $1AD39 (prince) and $1AD79 (princess), 8-byte entries, in ROM order.
+    'dw': (['Bran', 'Glynn', 'Talint', 'Numor', 'Lars', 'Orfeo', 'Artho', 'Esgar'],
+           ['Varia', 'Elani', 'Ollisa', 'Roz', 'Kailin', 'Peta', 'Illyth', 'Gwen']),
+}
+COMPANION_EGGS = [('RPGONE', 'prefix', 'Square', 'Enix'), ('Zeke', 'prefix', 'Anthony', 'Alyssa')]   # RPGOne v2.0
+RADMAGE_EGG = [('Rad', 'exact', 'Edric', 'Gwen'), ('RadMage', 'exact', 'Edric', 'Gwen')]
+# English name-entry punctuation -> NES name-entry code (both games typed in Mesen): . , ; ' ... ! ? arrow
+NES_PUNCT = [(0x50, 0x6B), (0x51, 0x69), (0x53, 0x70), (0x55, 0x67), (0x56, 0x75), (0x58, 0x6F), (0x59, 0x6E),
+             (0x54, 0x63)]
+NAMING_BLOCK_CRC = 0xC8772B29        # RPGOne's $30:8E00-$8FFF (both flavors, v2.0 = v0.3.0)
+NAME_POOL = (0x8468, 0x8520)         # zero in RPGOne, right after its name list $30:8400-$8467
+
+NAMING_SRC = '''
+ORG $8E00
+prince:
+  PHB
+  PHX
+  PHY
+  PHK
+  PLB
+  LDA #$00
+  JMP common
+common:
+  PHA                 ; 1,S = 0 prince / 1 princess; 4,S = X from $09 (JP index * 4)
+  JSR egg
+  BCC normal
+  DEC A               ; egg id 1.. -> pointer (id - 1) * 4 + which * 2
+  ASL A
+  ASL A
+  CLC
+  ADC $01,S
+  ADC $01,S
+  REP #$20
+  AND #$00FF
+  TAX
+  SEP #$20
+  LDY eggptr,X
+  BRA copy
+normal:
+{normal}
+pick:
+  LDA $01,S
+  BNE pick2
+  LDY princetab,X
+  BRA copy
+pick2:
+  LDY princesstab,X
+copy:
+  LDA $01,S
+  BNE copy2
+  LDX #$015F
+  BRA copyl
+copy2:
+  LDX #$0168
+copyl:
+  LDA $0000,Y
+  STA $7E0000,X
+  CMP #$FF
+  BEQ done
+  INX
+  INY
+  BRA copyl
+done:
+  PLA
+  PLY
+  PLX
+  PLB
+  RTL
+egg:                  ; C set and A = egg id when $0156 matches a record: pattern, FE (prefix) or FF (exact), id
+  LDX #eggtab
+egg_rec:
+  LDA $0000,X
+  BEQ egg_none
+  LDY #$0000
+egg_cmp:
+  LDA $0000,X
+  CMP #$FE
+  BEQ egg_hit
+  CMP $0156,Y
+  BNE egg_miss
+  CMP #$FF
+  BEQ egg_hit
+  INX
+  INY
+  BRA egg_cmp
+egg_miss:
+  LDA $0000,X
+  INX
+  CMP #$FE
+  BEQ egg_next
+  CMP #$FF
+  BNE egg_miss
+egg_next:
+  INX
+  BRA egg_rec
+egg_hit:
+  LDA $0001,X
+  SEC
+  RTS
+egg_none:
+  CLC
+  RTS
+ORG $8F00
+princess:
+  PHB
+  PHX
+  PHY
+  PHK
+  PLB
+  LDA #$01
+  JMP common
+{extra}
+princetab:
+  DW {princetab}
+princesstab:
+  DW {princesstab}
+eggptr:
+  DW {eggptr}
+eggptr_free:
+  DB 00 00 00 00
+eggtab:
+  DB {eggtab}
+eggtab_end:
+  DB 00
+'''
+NAMING_NORMAL = {
+    'dq': '''
+  REP #$20
+  LDA $04,S           ; JP: X = index * 4 -> table offset index * 2
+  LSR A
+  TAX
+  SEP #$20
+''',
+    'dw': '''
+  JSR nessum
+  XBA
+  LDA $01,S
+  BNE dw_q
+  XBA
+  AND #$07            ; NES: prince = sum & 7
+  BRA dw_i
+dw_q:
+  XBA
+  LSR A               ; NES: princess = (sum >> 3) & 7
+  LSR A
+  LSR A
+  AND #$07
+dw_i:
+  REP #$20
+  AND #$00FF
+  ASL A
+  TAX
+  SEP #$20
+'''}
+NAMING_EXTRA = {
+    'dq': '',
+    'dw': '''
+nessum:               ; A = the NES sum of the hero name at $0156 (NES codes, $60 after the end)
+  LDY #$0000
+  LDX #$0000
+ns_pos:
+  CPY #$0000
+  BNE ns_pad
+  LDA $0156,X
+  CMP #$FF
+  BNE ns_map
+  INY
+ns_pad:
+  LDA #$60
+  BRA ns_push
+ns_map:
+  JSR nesmap
+ns_push:
+  PHA
+  INX
+  CPX #$0008
+  BNE ns_pos
+  LDA #$00            ; position p is at (8 - p),S; NES order 3,7,2,6,1,5,0,4, one CLC
+  CLC
+  ADC $05,S
+  ADC $01,S
+  ADC $06,S
+  ADC $02,S
+  ADC $07,S
+  ADC $03,S
+  ADC $08,S
+  ADC $04,S
+  PLX
+  PLX
+  PLX
+  PLX
+  RTS
+nesmap:               ; English name code -> NES name code
+  CMP #$10
+  BCC nm_punct
+  CMP #$2A
+  BCS nm_lower
+  ADC #$14            ; A-Z (carry clear)
+  RTS
+nm_lower:
+  CMP #$30
+  BCC nm_punct
+  CMP #$4A
+  BCS nm_punct
+  SBC #$25            ; a-z: carry clear, so this subtracts $26
+  RTS
+nm_punct:
+  PHX
+  LDX #$0000
+nm_loop:
+  CMP punct,X
+  BEQ nm_found
+  INX
+  INX
+  CPX #$0010
+  BNE nm_loop
+  PLX                 ; no NES equivalent (digits, space, other marks): keep the code
+  RTS
+nm_found:
+  LDA punct+1,X
+  PLX
+  RTS
+punct:
+  DB {punct}
+'''}
+
+
+def companion_pool(rom, fl):
+    """Addresses of every name string the naming code needs: RPGOne's list is reused where it has the
+    name; the others go into the zero pool after it. Returns ({name: addr}, [(addr, bytes)] to write)."""
+    have, pool = {}, []
+    a = 0x8400
+    while a < 0x8468:                            # RPGOne's list: FF-terminated names
+        e = rom.index(b'\xff', off(0x30, a))
+        have[bytes(rom[off(0x30, a):e])] = a
+        a += e - off(0x30, a) + 1
+    prince, princess = COMPANIONS[fl]
+    names = prince + princess + [n for _, _, p, q in COMPANION_EGGS for n in (p, q)]
+    addr, nxt = {}, NAME_POOL[0]
+    for n in names:
+        b = enc(n)
+        if n in addr:
+            continue
+        if b in have:
+            addr[n] = have[b]
+        else:
+            addr[n] = nxt
+            pool.append((nxt, b + b'\xff'))
+            nxt += len(b) + 1
+    assert nxt <= NAME_POOL[1], 'name pool full'
+    return addr, pool
+
+
+def naming_layout(rom, fl):
+    addr, pool = companion_pool(rom, fl)
+    prince, princess = COMPANIONS[fl]
+    eggtab = []
+    for i, (pat, kind, _, _) in enumerate(COMPANION_EGGS):
+        eggtab += list(enc(pat)) + [0xFE if kind == 'prefix' else 0xFF, i + 1]
+    src = NAMING_SRC.format(
+        normal=NAMING_NORMAL[fl], extra=NAMING_EXTRA[fl].replace('{punct}', ' '.join('%02X %02X' % pq for pq in NES_PUNCT)),
+        princetab=', '.join('$%04X' % addr[n] for n in prince),
+        princesstab=', '.join('$%04X' % addr[n] for n in princess),
+        eggptr=', '.join('$%04X' % addr[n] for _, _, p, q in COMPANION_EGGS for n in (p, q)),
+        eggtab=' '.join('%02X' % x for x in eggtab))
+    segs, lab = asm(src)
+    return segs, lab, pool, addr
+
+
+def fix_companion_names(rom, fl):
+    segs, lab, pool, _ = naming_layout(rom, fl)
+    o = off(0x30, 0x8E00)
+    have = bytes(rom[o:o + 0x200])
+    if zlib.crc32(have) != NAMING_BLOCK_CRC:
+        raise SystemExit('companion_names: $30:8E00-$8FFF CRC32 %08X, want %08X' % (zlib.crc32(have), NAMING_BLOCK_CRC))
+    block = bytearray(0x200)
+    for org, b in segs:
+        assert 0x8E00 <= org and org + len(b) <= (0x8F00 if org < 0x8F00 else 0x9000), 'naming code overflows its page'
+        block[org - 0x8E00:org - 0x8E00 + len(b)] = b
+    rom[o:o + 0x200] = block
+    for a, b in pool:
+        put(rom, 0x30, a, bytes(len(b)), b, 'companion_names: name %04X' % a)
+
+
+def fix_companion_names_radmage(rom, fl):
+    """Hero named exactly Rad or RadMage: Edric / Gwen. Needs companion_names (adds to its egg table)."""
+    segs, lab, pool, addr = naming_layout(rom, fl)
+    o = off(0x30, 0x8E00)
+    if bytes(rom[o:o + len(segs[0][1])]) != segs[0][1]:
+        raise SystemExit('companion_names_radmage needs companion_names')
+    used = max(a + len(b) for a, b in pool) if pool else NAME_POOL[0]
+    extra = []
+    for n in ('Edric', 'Gwen'):
+        if n not in addr:
+            b = enc(n) + b'\xff'
+            put(rom, 0x30, used, bytes(len(b)), b, 'companion_names_radmage: name %s' % n)
+            addr[n] = used
+            used += len(b)
+            extra.append(n)
+    assert used <= NAME_POOL[1]
+    p, q = RADMAGE_EGG[0][2], RADMAGE_EGG[0][3]
+    put(rom, 0x30, lab['eggptr_free'], bytes(4), addr[p].to_bytes(2, 'little') + addr[q].to_bytes(2, 'little'),
+        'companion_names_radmage: egg pointers')
+    rec = b''.join(enc(pat) + bytes([0xFF, len(COMPANION_EGGS) + 1]) for pat, kind, _, _ in RADMAGE_EGG
+                   if kind == 'exact') + b'\x00'
+    put(rom, 0x30, lab['eggtab_end'], bytes(len(rec)), rec, 'companion_names_radmage: egg records')
+    assert lab['eggtab_end'] + len(rec) <= 0x9000
+
+
+# ---------------------------------------------------------------- v0.4 stage 2: item names
+# Item names are FF-terminated strings in bank $01 ($2A = menu row break). They are reached through table A
+# $09:E927 (field messages), table B $09:E9FB (menus, Status/Equip lists, battle messages) and the menu-entry
+# templates in bank $09 that call the string directly (F7 lo hi len). A name that moves must be re-pointed in all
+# of them; nothing else refers to these strings (whole-ROM scan, docs/V04_STAGE2_REPORT.md).
+ITEM_TABLE_A, ITEM_TABLE_B = 0xE927, 0xE9FB
+
+
+def item_ptr(rom, table, item):
+    o = off(0x09, table) + 2 * item
+    return rom[o] | rom[o + 1] << 8
+
+
+def item_text(rom, ptr):
+    o = off(0x01, ptr)
+    return bytes(rom[o:rom.index(b'\xff', o)])
+
+
+def item_refs(rom, ptr):
+    """Bank-$09 addresses of every 2-byte reference to the bank-$01 string at ptr: table entries and F7 calls."""
+    refs = [t + 2 * i for t in (ITEM_TABLE_A, ITEM_TABLE_B) for i in range(0x6A) if item_ptr(rom, t, i) == ptr]
+    b = rom[off(0x09, 0x8000):off(0x09, 0x8000) + 0x8000]
+    pat = bytes([0xF7, ptr & 0xFF, ptr >> 8])
+    i = b.find(pat)
+    while i >= 0:
+        refs.append(0x8000 + i + 1)
+        i = b.find(pat, i + 1)
+    return sorted(refs)
+
+
+def ench(s):
+    """Item-name text: enct() plus '|' = $2A, RPGOne's menu row break."""
+    return b''.join(b'\x2a' if c == '|' else enct(c) for c in s)
+
+
+def move_item_name(rom, item, old, new, at, nrefs, what):
+    """Write new at $01:at and point every reference to item's current string there (old string left, unreferenced)."""
+    p = item_ptr(rom, ITEM_TABLE_B, item)
+    have = item_text(rom, p)
+    if have not in (ench(old), ench(old) + b'\x2a'):            # trailing break: item_name_trailing_break skipped
+        raise SystemExit('%s: item $%02X reads %s' % (what, item, have.hex()))
+    refs = item_refs(rom, p)
+    if len(refs) not in nrefs:
+        raise SystemExit('%s: %d references to $01:%04X, expected %s' % (what, len(refs), p, nrefs))
+    put(rom, 0x01, at, bytes(len(ench(new)) + 1), ench(new) + b'\xff', what + ' (new string)')
+    for r in refs:
+        put(rom, 0x09, r, p.to_bytes(2, 'little'), at.to_bytes(2, 'little'), what + ' (reference $09:%04X)' % r)
+
+
+def fix_item_message_name_19(rom, fl):
+    # Item $19 (JP stone tablet): table A, used by field messages, points at item $1B's "Silver Harp" in both
+    # flavors. JP's table A has its own entry for $19 ($01:DD00) and RPGOne made A = B for every other item.
+    harp = {'dq': 0xD9AA, 'dw': 0xD9E0}[fl]
+    assert item_ptr(rom, ITEM_TABLE_A, 0x1B) == harp and item_text(rom, harp) == ench('Silver|Harp')
+    put(rom, 0x09, ITEM_TABLE_A + 2 * 0x19, harp.to_bytes(2, 'little'),
+        item_ptr(rom, ITEM_TABLE_B, 0x19).to_bytes(2, 'little'), 'item_message_name_19')
+
+
+def fix_dq_chain_sickle(rom, fl):
+    # DQ $29 kusarigama: "Chain Whip" -> "Chain Sickle" (DW and JP: chain sickle). 2 bytes longer: moved.
+    if fl == 'dq':
+        move_item_name(rom, 0x29, 'Chain|Whip', 'Chain|Sickle', 0xFFC0, {6}, 'dq_chain_sickle')
+
+
+def fix_dq_hades_shield(rom, fl):
+    # DQ $43: "Hade's Shield" -> "Hades' Shield" (same length, same one-row layout).
+    if fl == 'dq':
+        p = item_ptr(rom, ITEM_TABLE_B, 0x43)
+        assert p == 0xD776 and item_text(rom, p) in (ench("Hade's Shield"), ench("Hade's Shield|"))
+        put(rom, 0x01, 0xD77A, '5542', '4255', 'dq_hades_shield')
+
+
+def fix_dq_hades_shield_rows(rom, fl):
+    # DQ $43 on two menu rows ("Hades'" / "Shield", like DW's "Evil" / "Shield"). As one 13-tile row it fills the
+    # right column of the battle item list, and the left entry then loses its second row (RPGOne v2.0 to v0.3.0,
+    # Mesen). In messages $2A is a 4-px blank like the space it replaces.
+    if fl == 'dq':
+        p = item_ptr(rom, ITEM_TABLE_B, 0x43)
+        assert p == 0xD776 and item_text(rom, p)[:7] in (ench("Hade's "), ench("Hades' "))
+        put(rom, 0x01, 0xD77C, '00', '2a', 'dq_hades_shield_rows')
+
+
+def fix_dq_stone_tablet(rom, fl):
+    # DQ $19 sekiban: "Lithograph" -> "Stone Tablet", one menu row of 12 tiles, like "Lithograph".
+    # Moved (13 bytes, the old slot has 12). References: table B, 2 templates, and table A if
+    # item_message_name_19 ran.
+    if fl == 'dq':
+        move_item_name(rom, 0x19, 'Lithograph', 'Stone Tablet', 0xFFD0, {3, 4}, 'dq_stone_tablet')
+
+
 FIXES = [('title_idle', fix_title_idle), ('names', fix_names), ('leaf', fix_leaf),
          ('dragonlord', fix_dragonlord), ('dq1_level30_save', fix_dq1_level30_save),
          ('dq1_princess_love', fix_dq1_princess_love), ('dq1_king_victory', fix_dq1_king_victory),
@@ -1083,6 +1567,15 @@ _S4 = [fid for fid, _ in FIXES].index('field_heal_line_break')
 V03_STAGE3 = [fid for fid, _ in FIXES[FIXES.index(('field_spell_wait', fix_field_spell_wait)):_S4]]
 V03_STAGE4 = [fid for fid, _ in FIXES[_S4:]]
 V03 = V03_STAGE1 + V03_STAGE2 + V03_STAGE3 + V03_STAGE4
+# v0.4 stage 1
+FIXES += [('companion_names', fix_companion_names), ('companion_names_radmage', fix_companion_names_radmage)]
+V04_STAGE1 = ['companion_names', 'companion_names_radmage']
+# v0.4 stage 2
+FIXES += [('item_message_name_19', fix_item_message_name_19), ('dq_chain_sickle', fix_dq_chain_sickle),
+          ('dq_hades_shield', fix_dq_hades_shield), ('dq_hades_shield_rows', fix_dq_hades_shield_rows),
+          ('dq_stone_tablet', fix_dq_stone_tablet)]
+V04_STAGE2 = ['item_message_name_19', 'dq_chain_sickle', 'dq_hades_shield', 'dq_hades_shield_rows', 'dq_stone_tablet']
+V04 = V04_STAGE1 + V04_STAGE2
 
 
 def bps_create(src, dst):

@@ -1,4 +1,4 @@
-"""Static regression checks for the fixes in tools/build.py (v0.3 and the v0.2 baseline).
+"""Static regression checks for the fixes in tools/build.py (v0.4 stage 1, v0.3 and the v0.2 baseline).
 
 Needs the same inputs as build.py (original JP ROM, RPGOne v2.0 IPS, mziab BPS) and nothing else:
 no emulator. Exit code 1 on any failure.
@@ -854,6 +854,141 @@ def check_possessive(jp, v02, rom, fl):
            '%s: possessive at %s reads "\'s"' % (fl, where))
 
 
+V03_CRC = {'dq': 0x980562DD, 'dw': 0x501565D5}      # the v0.3.0 release
+
+
+def names_at(rom, a, n):
+    out = []
+    for k in range(n):
+        p = rom[off(0x30, a) + 2 * k] | rom[off(0x30, a) + 2 * k + 1] << 8
+        q = off(0x30, p)
+        e = rom.index(b'\xff', q)
+        out.append(bytes(rom[q:e]))
+    return out
+
+
+def check_companion(jp, v03, v04, fl):
+    """v0.4 stage 1: companion names (build ids companion_names, companion_names_radmage)."""
+    diff = {i for i in range(len(v04)) if v03[i] != v04[i]}
+    only = apply(v03, fl, ['companion_names'])
+    both = apply(v03, fl, build.V04_STAGE1)
+    rad = {i for i in range(len(both)) if both[i] != only[i]}
+    segs, lab, pool, addr = build.naming_layout(bytearray(v03), fl)
+    a30 = lambda i: 0x8000 + i % 0x8000 if i // 0x8000 == 0x30 else -1
+    inside = all(0x8468 <= a30(i) < 0x8520 or 0x8E00 <= a30(i) < 0x9000 for i in diff)
+    rad_ok = all(lab['eggptr_free'] <= a30(i) < lab['eggptr_free'] + 4 or lab['eggtab_end'] <= a30(i) < 0x9000
+                 or 0x8468 <= a30(i) < 0x8520 for i in rad)
+    ok(diff and bytes(both) == bytes(v04) and inside and rad and rad_ok,
+       '%s: %d changed bytes, all from the stage-1 fixes, only in $30:8468-$851F and $30:8E00-$8FFF; '
+       'companion_names_radmage adds only its egg records, egg pointers and names (%d bytes)' % (fl, len(diff), len(rad)))
+
+    def jsl(rom, tgt):
+        pat = bytes([0x22, tgt & 0xFF, tgt >> 8 & 0xFF, tgt >> 16])
+        out, i = [], rom.find(pat)
+        while i >= 0:
+            out.append('%02X:%04X' % (i // 0x8000, 0x8000 + i % 0x8000))
+            i = rom.find(pat, i + 1)
+        return out
+    ok(jsl(v04, 0x308E00) == ['09:B002'] and jsl(v04, 0x308F00) == ['09:B03B'] and jsl(v04, 0x09AFBF) == ['00:E030'],
+       '%s: the naming code is reached only from the new-game routine ($00:E030 -> $09:AFBF -> $09:B002/$B03B)' % fl)
+    same = [(0x00, 0xE0EE, 0xE11A), (0x09, 0xAF9C, 0xB122), (0x09, 0xB0AC, 0xB122), (0x00, 0xE2B9, 0xE2C0)]
+    ok(all(v04[off(b, lo):off(b, hi)] == v03[off(b, lo):off(b, hi)] for b, lo, hi in same),
+       '%s: new-game routine, hidden rename (Start+Left/Right on Continue) and name entry = v0.3' % fl)
+
+    p, q = build.COMPANIONS[fl]
+    got_p = names_at(v04, lab['princetab'], 8)
+    got_q = names_at(v04, lab['princesstab'], 8)
+    ok(got_p == [build.enc(n) for n in p] and got_q == [build.enc(n) for n in q],
+       '%s: prince list %s, princess list %s' % (fl, ', '.join(p), ', '.join(q)))
+    width = lambda b: sum(v04[off(0x30, 0x8100) + x] for x in b)
+    allnames = got_p + got_q + names_at(v04, lab['eggptr'], 6)
+    ok(len(set(got_p)) == 8 and len(set(got_q)) == 8 and all(len(b) <= 8 and width(b) <= 57 for b in allnames),
+       '%s: 8 different names per list; every name at most 8 letters and 57 px (RPGOne\'s Samantha)' % fl)
+    e = off(0x30, lab['eggtab'])
+    tab = bytes(v04[e:v04.index(b'\x00', e)])
+    want = b''.join(build.enc(t) + bytes([0xFE if k == 'prefix' else 0xFF, i + 1])
+                    for i, (t, k, _, _) in enumerate(build.COMPANION_EGGS))
+    want += b''.join(build.enc(t) + bytes([0xFF, 3]) for t, _, _, _ in build.RADMAGE_EGG)
+    eggs = names_at(v04, lab['eggptr'], 6)
+    ok(tab == want and eggs == [build.enc(n) for n in ('Square', 'Enix', 'Anthony', 'Alyssa', 'Edric', 'Gwen')],
+       '%s: eggs RPGONE* -> Square / Enix, Zeke* -> Anthony / Alyssa (RPGOne), Rad and RadMage -> Edric / Gwen' % fl)
+    if fl == 'dw':
+        pt = off(0x30, lab['punct'])
+        ok(bytes(v04[pt:pt + 16]) == bytes(x for pq in build.NES_PUNCT for x in pq),
+           'dw: NES punctuation map . , ; \' ... ! ? arrow as typed in both games')
+    if fl == 'dq':
+        # the JP lists the DQ names transliterate ($09:B06C prince, $09:B08C princess, 8 x 4 bytes), decoded
+        # in docs/V04_INVESTIGATION.md 2.1; checked by checksum so no JP data is kept here
+        ok(zlib.crc32(jp[off(0x09, 0xB06C):off(0x09, 0xB0AC)]) == 0x9068ADA9,
+           'dq: the JP name tables are the ones the transliterations were made from (CRC32 9068ADA9)')
+
+
+STAGE2_NAMES = {'dq': {0x19: 'Stone Tablet', 0x29: 'Chain|Sickle', 0x43: "Hades'|Shield"},
+                 'dw': {0x19: 'Tablet of|Erdrick'}}
+
+
+def item_refs_text(rom):
+    """{bank-$09 reference address: item-name text} for both tables and every F7 template call."""
+    out = {}
+    for t in (build.ITEM_TABLE_A, build.ITEM_TABLE_B):
+        for i in range(0x6A):
+            p = build.item_ptr(rom, t, i)
+            if p >= 0x8000:
+                out[t + 2 * i] = build.item_text(rom, p)
+    b = rom[off(0x09, 0x8000):off(0x09, 0x8000) + 0x8000]
+    for i in range(len(b) - 3):
+        if b[i] == 0xF7:
+            p = b[i + 1] | b[i + 2] << 8
+            if 0xD500 <= p <= 0xE1FF or 0xFF00 <= p <= 0xFFFF:
+                out[0x8001 + i] = build.item_text(rom, p)
+    return out
+
+
+def check_item_names(jp, v04s1, v04, fl):
+    """v0.4 stage 2: item names (ids item_message_name_19, dq_chain_sickle, dq_hades_shield, dq_hades_shield_rows,
+    dq_stone_tablet). v04s1 = the build with stage 1 only."""
+    want = STAGE2_NAMES[fl]
+    ok_names = True
+    for item, name in want.items():
+        p = build.item_ptr(v04, build.ITEM_TABLE_B, item)
+        refs = build.item_refs(v04, p)
+        a_ok = build.item_ptr(v04, build.ITEM_TABLE_A, item) == p
+        ok_names &= build.item_text(v04, p) == build.ench(name) and a_ok and len(refs) >= 3
+    ok(ok_names, '%s: %s; table A (messages), table B (menus, battle) and every template call agree'
+       % (fl, ', '.join('$%02X %s' % (i, n.replace('|', ' ')) for i, n in sorted(want.items()))))
+    if fl == 'dq':
+        old = build.item_refs(v04, 0xD681) + build.item_refs(v04, 0xE0ED)
+        ok(not old, 'dq: nothing refers to the old strings (Chain Whip $01:D681, Lithograph $01:E0ED)')
+    before, after = item_refs_text(v04s1), item_refs_text(v04)
+    changed_refs = {r for item in want for r in build.item_refs(v04, build.item_ptr(v04, build.ITEM_TABLE_B, item))}
+    other = [r for r in set(before) | set(after) if r not in changed_refs and before.get(r) != after.get(r)]
+    ok(not other, '%s: every other item name (tables and templates) is unchanged%s' % (fl, ' ' + str(other[:5]) if other else ''))
+    width = lambda t: sum(v04[off(0x30, 0x8100) + x] for x in t)
+    rows_ok = all(len(r) <= (13 if k == 0 else 12) for n in want.values() for k, r in enumerate(build.ench(n).split(b'\x2a')))
+    caps = {0x19: 134, 0x29: 124, 0x43: 124}      # widest current item name / weapon name (px), messages
+    ok(rows_ok and all(width(build.ench(n)) <= caps[i] for i, n in want.items()),
+       '%s: new names within 13 / 12 tiles per row and no wider than existing names in messages' % fl)
+    # a one-row name of 13 tiles fills the right column of the battle item list and the left entry loses its
+    # second row (Mesen, docs/V04_STAGE2_REPORT.md 4.2); 12 tiles (Stone Tablet) leaves both entries whole
+    full = sorted({i for i in range(0x6A) if build.item_ptr(v04, build.ITEM_TABLE_B, i) >= 0x8000
+                   and len(build.item_text(v04, build.item_ptr(v04, build.ITEM_TABLE_B, i)).rstrip(b'\x2a')) >= 13
+                   and b'\x2a' not in build.item_text(v04, build.item_ptr(v04, build.ITEM_TABLE_B, i)).rstrip(b'\x2a')})
+    ok(not full, '%s: no one-row item name of 13 tiles (battle item list row loss)%s'
+       % (fl, ' ' + ', '.join('$%02X' % i for i in full) if full else ''))
+    # the $19 message target: JP has its own table-A entry for $19; RPGOne pointed it at $1B (Silver Harp)
+    jp_ok = build.item_ptr(jp, build.ITEM_TABLE_A, 0x19) != build.item_ptr(jp, build.ITEM_TABLE_A, 0x1B)
+    ok(jp_ok and build.item_ptr(v04s1, build.ITEM_TABLE_A, 0x19) == build.item_ptr(v04s1, build.ITEM_TABLE_A, 0x1B),
+       '%s: item $19 message target: JP $01:%04X (own entry), v0.3.0 = item $1B Silver Harp' % (fl, build.item_ptr(jp, build.ITEM_TABLE_A, 0x19)))
+    diff = [i for i in range(len(v04)) if v04s1[i] != v04[i]]
+    allowed = {off(0x09, r) + k for r in changed_refs for k in (0, 1)}
+    if fl == 'dq':
+        allowed |= set(range(off(0x01, 0xFFC0), off(0x01, 0xFFCD))) | set(range(off(0x01, 0xFFD0), off(0x01, 0xFFDD)))
+        allowed |= {off(0x01, 0xD77A), off(0x01, 0xD77B), off(0x01, 0xD77C)}
+    ok(diff and set(diff) <= allowed,
+       '%s: %d changed bytes, only the new strings ($01:FFC0/$FFD0), the Hades\' Shield bytes ($01:D77A-$D77C) and '
+       'the references of the changed items' % (fl, len(diff)))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--jp', default=build.JP)
@@ -861,14 +996,17 @@ def main():
     ap.add_argument('--mziab', default=os.path.join(build.ROOT, 'work', 'dq12fix_%s.bps'))
     a = ap.parse_args()
     jp = build.load_jp(a.jp)
-    v02ids = {fid for fid, _ in build.FIXES} - set(build.V03)
-    roms = {}
+    v02ids = {fid for fid, _ in build.FIXES} - set(build.V03) - set(build.V04)
+    roms, v04s = {}, {}
     for fl in ('dq', 'dw'):
         print('== %s' % fl)
         base = build.third_party_base(jp, fl, a.rpgone % fl.upper(), a.mziab % fl)
         v02 = apply(base, fl, v02ids)
         ok(zlib.crc32(v02) == V02_CRC[fl], '%s: v0.3 fixes skipped -> v0.2 (CRC32 %08X)' % (fl, zlib.crc32(v02)))
-        v03 = apply(base, fl, {fid for fid, _ in build.FIXES})
+        v03 = apply(base, fl, {fid for fid, _ in build.FIXES} - set(build.V04))
+        ok(zlib.crc32(v03) == V03_CRC[fl], '%s: v0.4 fixes skipped -> v0.3.0 (CRC32 %08X)' % (fl, zlib.crc32(v03)))
+        v04s[fl] = (apply(base, fl, {fid for fid, _ in build.FIXES} - set(build.V04_STAGE2)),
+                    apply(base, fl, {fid for fid, _ in build.FIXES}))
         roms[fl] = (base, v02, v03)
         check_footprint(v02, v03, base, fl)
         check_orb(jp, v03, fl)
@@ -905,6 +1043,22 @@ def main():
         check_stage4_text(jp, v02, v03, fl)
         check_coffin(jp, v02, v03, fl)
         check_possessive(jp, v02, v03, fl)
+    for fl in ('dq', 'dw'):
+        s1, full = v04s[fl]
+        print('== %s v0.4 stage 1 (stage-1 build CRC32 %08X)' % (fl, zlib.crc32(s1)))
+        check_companion(jp, roms[fl][2], s1, fl)
+        print('== %s v0.4 stage 2 (v0.4 build CRC32 %08X)' % (fl, zlib.crc32(full)))
+        check_item_names(jp, s1, full, fl)
+    print('== the v0.4 checks on v0.3.0 (expected to fail)')
+    for fl in ('dq', 'dw'):
+        n0 = len(fails)
+        check_companion(jp, roms[fl][2], roms[fl][2], fl)
+        check_item_names(jp, roms[fl][2], roms[fl][2], fl)
+        print('   %s v0.3.0: %d check(s) fail, as expected' % (fl, len(fails) - n0))
+        if len(fails) - n0 < 5:
+            ok(False, '%s: v0.4 negative control on v0.3.0 failed too few checks' % fl)
+        else:
+            del fails[n0:]
     print('== the same checks on v0.2 (expected to fail where v0.3 fixes something)')
     for fl in ('dq', 'dw'):
         n0 = len(fails)

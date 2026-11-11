@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.4.0 (2026-11-11)
+
+Details are in the README under "Changed in v0.4".
+
+- Companion names (both flavors): the Prince of Cannock's and the Princess of
+  Moonbrooke's names come from the whole hero name again, with eight possible names for
+  each, as in the Japanese game. RPGOne's version used only the first letter, which gave
+  two pairs for most names. DQ: the Japanese names, romanized. DW: the names and the rule
+  of the NES Dragon Warrior II. Existing saves keep their companions.
+- Item names (DQ flavor): Chain Whip to Chain Sickle, Hade's Shield to Hades' Shield,
+  Lithograph to Stone Tablet.
+- Battle item list (DQ flavor): the item to the left of the Hades' Shield no longer loses
+  its second line.
+- Both flavors: the stone tablet's field messages no longer call it the Silver Harp.
+
 ## v0.3.0 (2026-11-10)
 
 Details for each fix are in the README under "Fixed in v0.3".

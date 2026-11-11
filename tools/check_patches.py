@@ -6,9 +6,10 @@ Checked per flavor: IPS structure (no truncation field, no record at the 'EOF' o
 BPS source size/CRC = the original ROM, target size/CRC, patch CRC, the output hashes, and the headered
 patches on an all-zero header and (with --jp pointing at a copier-headered dump) on that real header.
 
-usage: python -I tools/check_patches.py --jp ROM [--dir FOLDER] [--baseline v0.2]
+usage: python -I tools/check_patches.py --jp ROM [--dir FOLDER] [--baseline v0.2|v0.3]
   --dir       folder holding the patches as released (default: the repository root)
-  --baseline  v0.2: expect the v0.2 build (every v0.3 fix skipped), e.g. for the committed v0.2 files
+  --baseline  v0.2: expect the v0.2 build (every v0.3 and v0.4 fix skipped), e.g. for the v0.2 files;
+              v0.3: expect the v0.3.0 build (every v0.4 fix skipped), e.g. for the released v0.3.0 files
 Inputs as for build.py (--rpgone, --mziab). Exit code 1 on any failure.
 """
 import argparse
@@ -99,7 +100,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--jp', default=build.JP)
     ap.add_argument('--dir', default=build.ROOT)
-    ap.add_argument('--baseline', choices=['v0.2'], default=None)
+    ap.add_argument('--baseline', choices=['v0.2', 'v0.3'], default=None)
     ap.add_argument('--rpgone', default=os.path.join(build.ROOT, 'work', 'DQV20%s.IPS'))
     ap.add_argument('--mziab', default=os.path.join(build.ROOT, 'work', 'dq12fix_%s.bps'))
     a = ap.parse_args()
@@ -107,7 +108,7 @@ def main():
     jp = build.load_jp(a.jp)                         # headerless, CRC-checked
     print('original ROM %s: %d bytes, headerless %s' % (a.jp, len(raw), h(jp)))
     jph0 = bytes(512) + jp
-    skip = set(build.V03) if a.baseline == 'v0.2' else set()
+    skip = {'v0.2': set(build.V03) | set(build.V04), 'v0.3': set(build.V04)}.get(a.baseline, set())
     for fl in ('dq', 'dw'):
         rom = bytearray(build.third_party_base(jp, fl, a.rpgone % fl.upper(), a.mziab % fl))
         for fid, fn in build.FIXES:

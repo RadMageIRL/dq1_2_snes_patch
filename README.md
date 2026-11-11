@@ -27,8 +27,9 @@ included unchanged, byte for byte, and this patch applies it before anything of 
 Their wording is kept. The exceptions are listed below: a stray digit in the Princess's
 Love message, a new menu word, "View", in the Dragon Quest II Status menu, and in v0.3
 spelling mistakes, names that disagree with the same flavor's own item list or with the
-rest of its script, and a few broken lines rebuilt from RPGOne's own wording. Everything
-else I changed is code, pointers, control bytes, line breaks, or which name a line prints.
+rest of its script, and a few broken lines rebuilt from RPGOne's own wording. In v0.4:
+the companions' names and three item names in the DQ flavor. Everything else I changed
+is code, pointers, control bytes, line breaks, or which name a line prints.
 
 ---
 
@@ -322,6 +323,41 @@ Both flavors unless marked.
   "&lt;name&gt;s coffin" (15 lines in each flavor).
 - A stray quote code played an extra talk sound in the middle of 13 DQ and 12 DW lines.
 
+### Changed in v0.4
+
+**The companions' names (both flavors)**
+
+- **What you see.** In RPGOne's translation the Prince of Cannock's and the Princess of
+  Moonbrooke's names depend only on the first letter of the hero's name. With a
+  capitalized name there are in practice two pairs: Rolando and Linda for A to M, Kain
+  and Maria for N to Z. In the Japanese game the names come from the whole hero name, with eight
+  possible names for each companion, so all 64 pairs can occur.
+- **Why.** RPGOne kept the Japanese code that adds up the letters of the hero's name, but
+  replaced the two name lookups with routines that check only the first letter.
+- **What I changed.** The names are picked from that sum again, as in the Japanese game.
+  The DQ flavor uses the eight Japanese names for each companion, romanized: Rand, Kain,
+  Arthur, Conan, Cookie, Tonnura, Sukesan and Paulo for the prince; Airin, Maria, Nana,
+  Akina, Purin, Maiko, Linda and Samantha for the princess. Kain, Arthur, Conan, Maria,
+  Nana, Linda and Samantha are RPGOne's own spellings. The DW flavor uses the names and
+  the rule of the NES *Dragon Warrior II*: Bran, Glynn, Talint, Numor, Lars, Orfeo, Artho
+  and Esgar; Varia, Elani, Ollisa, Roz, Kailin, Peta, Illyth and Gwen. A hero name that the
+  NES game accepts gets the same companions there. The names are chosen once, when a new
+  game starts, so existing saves keep their companions.
+
+**Item names (DQ flavor, and one fix in both)**
+
+- "Chain Whip" is now "Chain Sickle": the Japanese weapon is a chain sickle, and the DW
+  flavor already calls it that.
+- "Hade's Shield" is now "Hades' Shield", and menus show it on two lines ("Hades'" /
+  "Shield"). As one 13-character line it filled the right column of the battle item
+  list, and the item to its left lost its second line ("Chain Whip" showed only "Chain").
+  RPGOne v2.0 has the same problem.
+- "Lithograph" is now "Stone Tablet", which is what the Japanese name means. It still fits
+  on one line in every menu.
+- Both flavors: the stone tablet's field messages called it "Silver Harp". They now use
+  its own name ("Tablet of Erdrick" in DW). I found no way to get this item in normal
+  play, so few players can have seen this.
+
 ---
 
 ## Known issues this patch does not fix
@@ -373,23 +409,23 @@ Patched ROM:
 
 | | Size | CRC32 | SHA-1 |
 |---|---|---|---|
-| DQ, headerless | 2,097,152 | `980562DD` | `507c7f56c3addc4df70b5ac7d996b56c8a0898fb` |
-| DQ, headered | 2,097,664 | `85492236` | `3bea9d323e8440ba6f8921b7dca3fb3689ebf901` |
-| DW, headerless | 2,097,152 | `501565D5` | `2642f056964ce80622de8a87e4872910137d4f98` |
-| DW, headered | 2,097,664 | `4D59253E` | `7e328b1d7817807197aabfc26310f92437d518c7` |
+| DQ, headerless | 2,097,152 | `1EA20599` | `db4c8b53e32017979996a9e8cf6938d293756d51` |
+| DQ, headered | 2,097,664 | `03EE4572` | `a3828b153cefb64f8a2b1457d939e6baf1e03a36` |
+| DW, headerless | 2,097,152 | `46BD3728` | `8c2817ceb064cd14897a0ee0eff8aeec14899f78` |
+| DW, headered | 2,097,664 | `5BF177C3` | `2567e2c5ca5d7ab980527a2d5e14ac440be5fe38` |
 
 Patch files (SHA-1):
 
 | File | SHA-1 |
 |---|---|
-| `dq1-2-fixed-patch-radmageirl-dq.bps` | `827ea974e8f89b5004960acd5a7c9a42275a35e1` |
-| `dq1-2-fixed-patch-radmageirl-dq.ips` | `8bd07f95b318512ccd743561ceaea3d47803e3cf` |
-| `dq1-2-fixed-patch-radmageirl-dw.bps` | `267dda6987cd446433d79d29746a6a0b924ba505` |
-| `dq1-2-fixed-patch-radmageirl-dw.ips` | `107503583ca159d33aaf71919303c05d54c48e36` |
-| `headered/dq1-2-fixed-patch-radmageirl-dq-headered.bps` | `5890b6a6c13c3bbbc7a4c84a11981106dce8e8d5` |
-| `headered/dq1-2-fixed-patch-radmageirl-dq-headered.ips` | `62afb0c908202c6dfcdce30a7e6b422b99ae0b02` |
-| `headered/dq1-2-fixed-patch-radmageirl-dw-headered.bps` | `dae26e5a207159685a4eec67fc1c6f6dea134443` |
-| `headered/dq1-2-fixed-patch-radmageirl-dw-headered.ips` | `4a4a0a23a989a1854b1d898688fbbfc19368c218` |
+| `dq1-2-fixed-patch-radmageirl-dq.bps` | `3b4a3b6c70cdea38ce2abb91de670ac62b206867` |
+| `dq1-2-fixed-patch-radmageirl-dq.ips` | `07fb657f384a000d1a4ec44512506730e3bb397c` |
+| `dq1-2-fixed-patch-radmageirl-dw.bps` | `54e376a4b0c5da3d9a4e3f08d860421aab96cc0c` |
+| `dq1-2-fixed-patch-radmageirl-dw.ips` | `e06f6806a66c17a81937aa6bb9ac8093ea49945e` |
+| `headered/dq1-2-fixed-patch-radmageirl-dq-headered.bps` | `1cc7a60330f2693dc2f4043fecc521f1622d4d56` |
+| `headered/dq1-2-fixed-patch-radmageirl-dq-headered.ips` | `07baeb5e57aac5c9b7c264605c5ae82685d00aef` |
+| `headered/dq1-2-fixed-patch-radmageirl-dw-headered.bps` | `403b86377aa27c7984c5b7c671d05492c3b70fb5` |
+| `headered/dq1-2-fixed-patch-radmageirl-dw-headered.ips` | `5f004979040fd0a01f5c27a724f683175697aa6e` |
 
 ---
 
@@ -438,6 +474,16 @@ belong to exactly one fix, and skipping all v0.3 fixes must rebuild v0.2 byte fo
 code and compares the results with the build. This is targeted testing, not a new full
 playthrough.
 
+For v0.4, the companion names were checked in Mesen 2 by running the new-game routine
+with many hero names in both flavors: every one of the eight names for each companion
+appears, and each pair matches a separate model of the Japanese rule (DQ) or the NES rule
+(DW). For DW, the same hero names were also entered in the NES *Dragon Warrior II*, in
+Mesen, and gave the same companions in all 21 cases. The item names were checked in the
+field Item list, Status, Equip, the battle item list (in both columns), the shops and the
+messages that print them, with the items placed in the inventory directly.
+`tools/check_fixes.py` now runs 358 checks, and skipping all v0.4 fixes rebuilds v0.3.0
+byte for byte.
+
 ---
 
 ## Rebuilding
@@ -452,9 +498,11 @@ python tools/build.py --jp "Dragon Quest 1 & 2 (J).smc" \
 It takes your own Japanese ROM (headered or not), RPGOne's v2.0 IPS files and mziab's
 BPS files, checks the CRC32 at every stage, applies each fix only after confirming the
 bytes it replaces, and writes the patches. Every fix has an id, so `--only` and `--skip`
-build any subset. `tools/check_fixes.py` and `tools/check_patches.py` take the same
-inputs and run the checks described above. `tools/chunkscan.py` is the 256-byte scanner
-and `tools/txt.py` decodes the script.
+build a chosen set of fixes. Dependencies between fixes are enforced: a fix that needs
+another one, or does not find the bytes it expects, stops the build with an error
+instead of writing a patch for an unsupported combination. `tools/check_fixes.py` and
+`tools/check_patches.py` take the same inputs and run the checks described above.
+`tools/chunkscan.py` is the 256-byte scanner and `tools/txt.py` decodes the script.
 
 ---
 
